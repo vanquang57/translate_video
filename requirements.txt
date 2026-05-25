@@ -1,0 +1,30 @@
+# Core OCR (PaddleOCR 3.x with PaddlePaddle 3.x)
+# Default: CPU build of PaddlePaddle.
+# To use GPU (NVIDIA CUDA), uninstall paddlepaddle and install the GPU build matching your CUDA:
+#   pip uninstall paddlepaddle
+#   pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
+paddlepaddle==3.3.1
+paddleocr==3.5.0
+
+# Video / image / inpainting
+# PaddlePaddle 3.3.1 declares numpy>=1.21, so it accepts numpy 2.x.
+# opencv-python 4.13 requires numpy>=2, so we let pip pick numpy 2.x.
+opencv-python==4.13.0.92
+numpy>=2.0,<3.0
+Pillow==11.3.0
+
+# Translation
+deep-translator==1.11.4
+google-genai==2.6.0    # Gemini SDK (used when translator.gemini.enabled = true)
+
+# Video muxing (audio passthrough)
+ffmpeg-python==0.2.0
+
+# Configuration & utility
+PyYAML==6.0.2  # paddlex pin == 6.0.2
+psutil==7.2.2
+tqdm==4.67.3
+
+# Dev / testing (optional, can be installed separately)
+pytest==8.4.2
+hypothesis==6.152.9

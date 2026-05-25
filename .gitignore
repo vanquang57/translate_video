@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.hypothesis/
+
+# Project specific
+tmp/
+*.tmp.mp4
+out.mp4
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Allow fonts in repo (override potential ignores)
+!fonts/*.ttf
+!fonts/*.otf
+
+# Allow test fixtures (small sample videos)
+!tests/fixtures/*.mp4
