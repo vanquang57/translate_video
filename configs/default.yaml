@@ -30,13 +30,20 @@ translator:
   max_chars: 5000          # [1, 10000]
   max_retries: 3           # [0, 10]
   gemini:
-    enabled: true         # true to switch backend to gemini (alternative to setting backend: gemini)
+    enabled: true         # true để dùng Gemini làm backend dịch
     model: gemini-2.5-flash-lite
     api_key_env: GEMINI_API_KEY
-    max_chars_target: 0    # 0 = no length cap; otherwise prompt asks the model to stay <= this many chars
-    rpm: 15                # free-tier quota for Flash-Lite
+    # --- Cấu hình proxy (9Router / OpenRouter) ---
+    # Nếu base_url rỗng "" → gọi trực tiếp Google Gemini API (mặc định)
+    # Nếu base_url có giá trị → dùng OpenAI-compatible endpoint (9Router, OpenRouter, v.v.)
+    #   Ví dụ 9Router: base_url: "http://localhost:20128/v1"
+    #   Khi đó "model" là tên combo bạn đặt trong 9Router dashboard
+    #   api_key_env vẫn cần set (có thể dùng key bất kỳ nếu 9Router không yêu cầu)
+    base_url: ""
+    max_chars_target: 0    # 0 = không giới hạn; khác 0 = yêu cầu model dịch ngắn hơn N ký tự
+    rpm: 15                # giới hạn request/phút (free tier Gemini = 15-20)
     timeout_seconds: 30.0
-    batch_size: 10         # [1, 20] — number of texts per batch API call
+    batch_size: 10         # [1, 20] — số lượng text gộp trong 1 lần gọi API
 
 renderer:
   font_path: fonts/NotoSans-Regular.ttf

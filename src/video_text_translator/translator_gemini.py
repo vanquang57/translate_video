@@ -3,6 +3,9 @@
 Uses the official ``google-genai`` SDK against the public Gemini Developer
 API (free tier is generous enough for our use case).
 
+When ``base_url`` is configured, switches to the OpenAI-compatible client
+so that proxies like 9Router (http://localhost:20128/v1) work seamlessly.
+
 Key behaviour:
   * Returns the same :class:`Translation_Result` shape as
     :class:`GoogleTranslator`, so the pipeline does not need to know
@@ -22,7 +25,7 @@ import os
 import re
 import threading
 import time
-from typing import Sequence
+from typing import Any, Sequence
 
 from .errors import InvalidConfigError
 from .models import Gemini_Config, Text_Segment, Translation_Result
@@ -213,14 +216,37 @@ class GeminiTranslator:
     # Internals
     # ------------------------------------------------------------------
 
-    def _build_client(self, api_key: str):
-        try:
-            from google import genai  # type: ignore
-        except ImportError as exc:
-            raise InvalidConfigError(
-                "google-genai is not installed. Run: pip install google-genai"
-            ) from exc
-        return genai.Client(api_key=api_key)
+    def _build_client(self, api_key: str) -> Any:
+        """Khởi tạo client phù hợp với cấu hình.
+
+        - Nếu base_url được set → dùng OpenAI SDK (tương thích 9Router, OpenRouter, v.v.)
+        - Nếu base_url rỗng → dùng Google GenAI SDK (gọi trực tiếp Gemini API)
+        """
+        if self._config.base_url:
+            # --- Chế độ OpenAI-compatible (9Router, OpenRouter, v.v.) ---
+            try:
+                from openai import OpenAI  # type: ignore
+            except ImportError as exc:
+                raise InvalidConfigError(
+                    "openai package is not installed. Run: pip install openai"
+                ) from exc
+            logger.info(
+                "gemini: sử dụng OpenAI-compatible endpoint: %s (model: %s)",
+                self._config.base_url,
+                self._config.model,
+            )
+            self._use_openai = True
+            return OpenAI(base_url=self._config.base_url, api_key=api_key)
+        else:
+            # --- Chế độ Google GenAI SDK (mặc định) ---
+            try:
+                from google import genai  # type: ignore
+            except ImportError as exc:
+                raise InvalidConfigError(
+                    "google-genai is not installed. Run: pip install google-genai"
+                ) from exc
+            self._use_openai = False
+            return genai.Client(api_key=api_key)
 
     def _respect_rpm(self) -> None:
         """Sleep just enough to keep us below the configured RPM."""
@@ -246,18 +272,31 @@ class GeminiTranslator:
             self._call_history.append(now)
 
     def _call_backend(self, text: str) -> str:
-        from google.genai import types as genai_types  # type: ignore
-
         prompt = self._build_prompt(text)
-        response = self._client.models.generate_content(
-            model=self._config.model,
-            contents=prompt,
-            config=genai_types.GenerateContentConfig(
+
+        if self._use_openai:
+            # --- OpenAI-compatible mode (9Router, OpenRouter, v.v.) ---
+            response = self._client.chat.completions.create(
+                model=self._config.model,
+                messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
-                max_output_tokens=512,
-            ),
-        )
-        translated = (response.text or "").strip()
+                max_tokens=512,
+            )
+            translated = (response.choices[0].message.content or "").strip()
+        else:
+            # --- Google GenAI SDK mode ---
+            from google.genai import types as genai_types  # type: ignore
+
+            response = self._client.models.generate_content(
+                model=self._config.model,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    temperature=0.2,
+                    max_output_tokens=512,
+                ),
+            )
+            translated = (response.text or "").strip()
+
         # Strip any surrounding quotes the model sometimes adds despite the prompt.
         if len(translated) >= 2 and translated[0] in ("\"", "'") and translated[-1] == translated[0]:
             translated = translated[1:-1].strip()
@@ -300,8 +339,6 @@ class GeminiTranslator:
         On failure (API exception or parse mismatch), falls back to
         individual translate() calls for each text.
         """
-        from google.genai import types as genai_types  # type: ignore
-
         prompt = self._build_batch_prompt(texts)
         last_error: str | None = None
         attempts = self._max_retries + 1
@@ -309,15 +346,30 @@ class GeminiTranslator:
         for attempt in range(attempts):
             try:
                 self._respect_rpm()
-                response = self._client.models.generate_content(
-                    model=self._config.model,
-                    contents=prompt,
-                    config=genai_types.GenerateContentConfig(
+
+                if self._use_openai:
+                    # --- OpenAI-compatible mode ---
+                    response = self._client.chat.completions.create(
+                        model=self._config.model,
+                        messages=[{"role": "user", "content": prompt}],
                         temperature=0.2,
-                        max_output_tokens=1024 + 256 * len(texts),
-                    ),
-                )
-                raw_text = (response.text or "").strip()
+                        max_tokens=1024 + 256 * len(texts),
+                    )
+                    raw_text = (response.choices[0].message.content or "").strip()
+                else:
+                    # --- Google GenAI SDK mode ---
+                    from google.genai import types as genai_types  # type: ignore
+
+                    response = self._client.models.generate_content(
+                        model=self._config.model,
+                        contents=prompt,
+                        config=genai_types.GenerateContentConfig(
+                            temperature=0.2,
+                            max_output_tokens=1024 + 256 * len(texts),
+                        ),
+                    )
+                    raw_text = (response.text or "").strip()
+
                 parsed = self._parse_batch_response(raw_text, len(texts))
 
                 if parsed is None:

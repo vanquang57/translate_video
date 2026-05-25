@@ -293,6 +293,7 @@ class Gemini_Config:
     enabled: bool = False
     model: str = "gemini-2.5-flash-lite"
     api_key_env: str = "GEMINI_API_KEY"
+    base_url: str = ""  # custom endpoint URL (e.g. 9Router, OpenRouter); empty = default Google API
     max_chars_target: int = 0  # 0 = no length cap; otherwise the prompt asks the LLM to stay <= this many chars
     rpm: int = 15  # free-tier requests per minute (Flash-Lite)
     timeout_seconds: float = 30.0
