@@ -292,9 +292,11 @@ def build_config(merged: dict[str, Any]) -> Config:
             enabled=bool(gemini_d.get("enabled", False)),
             model=str(gemini_d.get("model", "gemini-2.5-flash-lite")),
             api_key_env=str(gemini_d.get("api_key_env", "GEMINI_API_KEY")),
+            base_url=str(gemini_d.get("base_url", "")),
             max_chars_target=int(gemini_d.get("max_chars_target", 0)),
             rpm=int(gemini_d.get("rpm", 15)),
             timeout_seconds=float(gemini_d.get("timeout_seconds", 30.0)),
+            batch_size=int(gemini_d.get("batch_size", 10)),
         )
         # Resolve effective backend: explicit `backend` takes precedence,
         # otherwise the legacy `gemini.enabled: true` flag enables it.
