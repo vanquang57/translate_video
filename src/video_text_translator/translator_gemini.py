@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 import time
 from typing import Sequence
@@ -38,6 +39,17 @@ _PROMPT_TEMPLATE = (
     "3. Bản dịch nên ngắn gọn, tương đương độ dài câu gốc nếu có thể.\n"
     "{length_constraint}"
     "Câu gốc:\n{source}"
+)
+
+_BATCH_PROMPT_TEMPLATE = (
+    "Bạn là biên dịch viên Hán-Việt. Dịch các chuỗi tiếng Trung dưới đây sang "
+    "tiếng Việt theo các quy tắc sau:\n"
+    "1. Trả về DUY NHẤT bản dịch tiếng Việt cho mỗi dòng, không thêm chú thích.\n"
+    "2. Giữ giọng văn tự nhiên, phù hợp ngữ cảnh phụ đề video hài.\n"
+    "3. Mỗi bản dịch trên một dòng riêng, đánh số theo thứ tự (1. bản dịch, 2. bản dịch, ...).\n"
+    "4. Không thêm dấu nháy, không thêm chú thích, không thêm dòng trống.\n"
+    "{length_constraint}"
+    "Các câu gốc:\n{numbered_sources}"
 )
 
 
@@ -127,9 +139,74 @@ class GeminiTranslator:
     def translate_segments(
         self, segments: Sequence[Text_Segment]
     ) -> dict[str, Translation_Result]:
+        # Step 1: Handle empty input
+        if not segments:
+            return {}
+
         results: dict[str, Translation_Result] = {}
+
+        # Step 2: Cache lookup — check each segment's normalized text
+        segments_needing_translation: list[Text_Segment] = []
         for seg in segments:
-            results[seg.segment_id] = self.translate(seg.canonical_text)
+            normalized = normalize_text(seg.canonical_text)
+
+            # Passthrough: empty/whitespace-only text
+            if not normalized:
+                result = Translation_Result(
+                    source_text=seg.canonical_text,
+                    translated_text=seg.canonical_text,
+                    status="passthrough",
+                )
+                self._cache[normalized] = result
+                results[seg.segment_id] = result
+                continue
+
+            cached = self._cache.get(normalized)
+            if cached is not None:
+                if cached.status in ("translated", "passthrough"):
+                    # Use cached result directly
+                    results[seg.segment_id] = cached
+                    continue
+                else:
+                    # Status is "untranslated" — re-include for translation
+                    del self._cache[normalized]
+                    segments_needing_translation.append(seg)
+            else:
+                segments_needing_translation.append(seg)
+
+        # If all segments were resolved from cache, return early
+        if not segments_needing_translation:
+            return results
+
+        # Step 3: Deduplicate — collect unique normalized texts
+        # Maps normalized_text -> list of segment_ids that share it
+        text_to_segment_ids: dict[str, list[str]] = {}
+        unique_texts_ordered: list[str] = []
+        for seg in segments_needing_translation:
+            normalized = normalize_text(seg.canonical_text)
+            if normalized not in text_to_segment_ids:
+                text_to_segment_ids[normalized] = []
+                unique_texts_ordered.append(normalized)
+            text_to_segment_ids[normalized].append(seg.segment_id)
+
+        # Step 4: Partition unique texts into batches of batch_size
+        batch_size = self._config.batch_size
+        batches: list[list[str]] = []
+        for i in range(0, len(unique_texts_ordered), batch_size):
+            batches.append(unique_texts_ordered[i : i + batch_size])
+
+        # Step 5: Call _translate_batch for each partition
+        # Step 6: Store results in cache keyed by normalized text
+        for batch in batches:
+            batch_results = self._translate_batch(batch)
+            for text, result in zip(batch, batch_results):
+                self._cache[text] = result
+
+        # Step 7: Merge — assemble output dict keyed by segment_id
+        for seg in segments_needing_translation:
+            normalized = normalize_text(seg.canonical_text)
+            results[seg.segment_id] = self._cache[normalized]
+
         return results
 
     # ------------------------------------------------------------------
@@ -198,3 +275,152 @@ class GeminiTranslator:
         return _PROMPT_TEMPLATE.format(
             length_constraint=length_constraint, source=source
         )
+
+    def _build_batch_prompt(self, texts: list[str]) -> str:
+        """Construct a batch translation prompt with numbered source texts."""
+        if self._config.max_chars_target > 0:
+            length_constraint = (
+                f"5. Mỗi bản dịch không vượt quá {self._config.max_chars_target} ký tự.\n"
+            )
+        else:
+            length_constraint = ""
+        numbered_sources = "\n".join(
+            f"{i}. {text}" for i, text in enumerate(texts, start=1)
+        )
+        return _BATCH_PROMPT_TEMPLATE.format(
+            length_constraint=length_constraint,
+            numbered_sources=numbered_sources,
+        )
+
+    def _translate_batch(self, texts: list[str]) -> list[Translation_Result]:
+        """Translate a batch of texts in a single API call with fallback.
+
+        Each text in *texts* is already normalized (stripped). On success,
+        returns one Translation_Result per text with status "translated".
+        On failure (API exception or parse mismatch), falls back to
+        individual translate() calls for each text.
+        """
+        from google.genai import types as genai_types  # type: ignore
+
+        prompt = self._build_batch_prompt(texts)
+        last_error: str | None = None
+        attempts = self._max_retries + 1
+
+        for attempt in range(attempts):
+            try:
+                self._respect_rpm()
+                response = self._client.models.generate_content(
+                    model=self._config.model,
+                    contents=prompt,
+                    config=genai_types.GenerateContentConfig(
+                        temperature=0.2,
+                        max_output_tokens=1024 + 256 * len(texts),
+                    ),
+                )
+                raw_text = (response.text or "").strip()
+                parsed = self._parse_batch_response(raw_text, len(texts))
+
+                if parsed is None:
+                    # Count mismatch — fall back to individual translation
+                    logger.warning(
+                        "gemini batch: parse failure (count mismatch) for batch "
+                        "of %d texts, falling back to individual translation",
+                        len(texts),
+                    )
+                    return [self.translate(t) for t in texts]
+
+                # Check for empty parsed items and handle them
+                results: list[Translation_Result] = []
+                empty_indices: list[int] = []
+
+                for i, translated in enumerate(parsed):
+                    if not translated.strip():
+                        empty_indices.append(i)
+                        results.append(None)  # type: ignore[arg-type]  # placeholder
+                    else:
+                        results.append(
+                            Translation_Result(
+                                source_text=texts[i],
+                                translated_text=translated,
+                                status="translated",
+                            )
+                        )
+
+                # Retry empty items individually
+                if empty_indices:
+                    logger.warning(
+                        "gemini batch: %d/%d items were empty, retrying individually",
+                        len(empty_indices),
+                        len(texts),
+                    )
+                    for idx in empty_indices:
+                        results[idx] = self.translate(texts[idx])
+
+                return results
+
+            except Exception as exc:  # noqa: BLE001
+                last_error = f"{type(exc).__name__}: {exc}"
+                logger.warning(
+                    "gemini batch attempt %d/%d failed for batch of %d texts: %s",
+                    attempt + 1,
+                    attempts,
+                    len(texts),
+                    last_error,
+                )
+                if attempt < self._max_retries and attempt < len(self._backoff):
+                    time.sleep(self._backoff[attempt])
+
+        # All retries exhausted — fall back to individual translation
+        logger.warning(
+            "gemini batch: all %d attempts failed (last error: %s) for batch "
+            "of %d texts, falling back to individual translation",
+            attempts,
+            last_error,
+            len(texts),
+        )
+        return [self.translate(t) for t in texts]
+
+    def _parse_batch_response(
+        self, response: str, expected_count: int
+    ) -> list[str] | None:
+        """Parse a numbered-list batch response into individual translations.
+
+        Splits the response on line boundaries, skips empty lines, strips
+        the numeric prefix (pattern ``^\\d+\\.\\s+``), strips surrounding
+        whitespace and quotes from each translation.
+
+        Returns ``None`` if the number of parsed translations does not equal
+        *expected_count*, signaling that the caller should fall back to
+        individual translation.
+        """
+        _numbered_prefix_re = re.compile(r"^\d+\.\s+")
+
+        lines = response.splitlines()
+        translations: list[str] = []
+
+        for line in lines:
+            # Skip empty lines (after stripping whitespace)
+            stripped_line = line.strip()
+            if not stripped_line:
+                continue
+
+            # Strip the numeric prefix if present (e.g., "1. ", "12. ")
+            text = _numbered_prefix_re.sub("", stripped_line)
+
+            # Strip leading/trailing whitespace
+            text = text.strip()
+
+            # Strip surrounding quotes (single or double)
+            if (
+                len(text) >= 2
+                and text[0] in ('"', "'")
+                and text[-1] == text[0]
+            ):
+                text = text[1:-1].strip()
+
+            translations.append(text)
+
+        if len(translations) != expected_count:
+            return None
+
+        return translations

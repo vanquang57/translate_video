@@ -296,6 +296,7 @@ class Gemini_Config:
     max_chars_target: int = 0  # 0 = no length cap; otherwise the prompt asks the LLM to stay <= this many chars
     rpm: int = 15  # free-tier requests per minute (Flash-Lite)
     timeout_seconds: float = 30.0
+    batch_size: int = 10  # number of texts per batch API call [1, 20]
 
     def __post_init__(self) -> None:
         if not self.model:
@@ -315,6 +316,11 @@ class Gemini_Config:
             raise ValueError(
                 f"translator.gemini.timeout_seconds must be in (0, 120] "
                 f"(got {self.timeout_seconds})"
+            )
+        if not (1 <= self.batch_size <= 20):
+            raise ValueError(
+                f"translator.gemini.batch_size must be in [1, 20] "
+                f"(got {self.batch_size})"
             )
 
 

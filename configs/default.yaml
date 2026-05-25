@@ -36,6 +36,7 @@ translator:
     max_chars_target: 0    # 0 = no length cap; otherwise prompt asks the model to stay <= this many chars
     rpm: 15                # free-tier quota for Flash-Lite
     timeout_seconds: 30.0
+    batch_size: 10         # [1, 20] — number of texts per batch API call
 
 renderer:
   font_path: fonts/NotoSans-Regular.ttf
