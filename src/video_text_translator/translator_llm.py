@@ -43,8 +43,9 @@ _BATCH_PROMPT_TEMPLATE = (
     "tiếng Việt theo các quy tắc sau:\n"
     "1. Trả về DUY NHẤT bản dịch tiếng Việt cho mỗi dòng, không thêm chú thích.\n"
     "2. Giữ giọng văn tự nhiên, phù hợp ngữ cảnh phụ đề video.\n"
-    "3. Mỗi bản dịch trên một dòng riêng, đánh số theo thứ tự (1. bản dịch, 2. bản dịch, ...).\n"
-    "4. Không thêm dấu nháy, không thêm chú thích, không thêm dòng trống.\n"
+    "3. Mỗi bản dịch nên ngắn gọn, có độ dài ký tự xấp xỉ câu gốc tương ứng của nó nếu có thể.\n"
+    "4. Mỗi bản dịch trên một dòng riêng, đánh số theo thứ tự (1. bản dịch, 2. bản dịch, ...).\n"
+    "5. Không thêm dấu nháy, không thêm chú thích, không thêm dòng trống.\n"
     "{length_constraint}"
     "Các câu gốc:\n{numbered_sources}"
 )
@@ -342,7 +343,7 @@ class LlmTranslator:
         """Tạo prompt batch với danh sách đánh số."""
         if self._config.max_chars_target > 0:
             length_constraint = (
-                f"5. Mỗi bản dịch không vượt quá {self._config.max_chars_target} ký tự.\n"
+                f"6. Mỗi bản dịch không vượt quá {self._config.max_chars_target} ký tự.\n"
             )
         else:
             length_constraint = ""

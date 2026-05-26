@@ -92,6 +92,8 @@ class IoUContentTracker:
         n_inactive: int = 3,
         ocr_stride: int = 1,
         max_active_segments: int = 100,
+        smooth_lock_threshold: int = 3,
+        smooth_ema_alpha: float = 0.3,
     ) -> None:
         if frame_width <= 0 or frame_height <= 0:
             raise ValueError(
@@ -106,6 +108,8 @@ class IoUContentTracker:
         # Req 10.9: scale n_inactive by stride to avoid premature closure.
         self._n_inactive_effective = max(3, math.ceil(n_inactive * ocr_stride))
         self._max_active = max_active_segments
+        self._smooth_lock_threshold = smooth_lock_threshold
+        self._smooth_ema_alpha = smooth_ema_alpha
 
         self._active: list[_ActiveSegment] = []
         self._closed: list[_ActiveSegment] = []
@@ -205,7 +209,11 @@ class IoUContentTracker:
 
         for seg in self._closed:
             self._fill_missing(seg)
-            self._smooth_boxes(seg)
+            self._smooth_boxes(
+                seg,
+                lock_threshold=self._smooth_lock_threshold,
+                ema_alpha=self._smooth_ema_alpha,
+            )
 
         result: list[Text_Segment] = []
         for seg in self._closed:
@@ -342,33 +350,78 @@ class IoUContentTracker:
         return 0.0
 
     @staticmethod
-    def _smooth_boxes(seg: _ActiveSegment, window: int = 5) -> None:
-        """Apply a centered moving-average smoother to every entry's box.
+    def _smooth_boxes(
+        seg: _ActiveSegment,
+        lock_threshold: int = 3,
+        ema_alpha: float = 0.3,
+    ) -> None:
+        """Stabilize box positions using position locking + EMA smoothing.
 
-        OCR per-frame jitter (1-2 px noise on each side) plus auto-fit
-        font-size recompute can make the rendered Vietnamese text appear to
-        wobble. Averaging the box geometry over a small window damps that
-        noise without softening genuine motion noticeably.
+        Two-phase approach to eliminate subtitle jitter:
+
+        1. **Position locking**: If the incoming box differs from the
+           current smoothed position by less than ``lock_threshold`` pixels
+           on every axis (x, y, w, h), the position is held (locked). This
+           eliminates micro-jitter for static text where OCR noise causes
+           1-2 px fluctuations between frames.
+
+        2. **EMA (Exponential Moving Average)**: When the delta exceeds
+           the lock threshold (genuine motion), the smoothed position is
+           updated via EMA: ``smoothed = alpha * new + (1 - alpha) * prev``.
+           This produces a gradual transition instead of a hard snap,
+           making real movement look fluid rather than jerky.
+
+        Parameters
+        ----------
+        seg : _ActiveSegment
+            The segment whose entries will be smoothed in-place.
+        lock_threshold : int
+            Maximum per-axis pixel difference that is treated as noise and
+            locked out. Default 3 px covers typical OCR jitter.
+        ema_alpha : float
+            EMA responsiveness in (0, 1]. Lower values = smoother but
+            laggier; higher = more responsive. Default 0.3 balances
+            smoothness with tracking speed.
         """
-        if window <= 1 or len(seg.entries) < 2:
+        if len(seg.entries) < 2:
             return
         ordered = sorted(seg.entries, key=lambda e: e.frame_index)
-        n = len(ordered)
-        half = window // 2
-        smoothed: list[Frame_Region_Entry] = []
-        for i, entry in enumerate(ordered):
-            lo = max(0, i - half)
-            hi = min(n, i + half + 1)
-            window_entries = ordered[lo:hi]
-            sx = sum(e.box.x for e in window_entries) / len(window_entries)
-            sy = sum(e.box.y for e in window_entries) / len(window_entries)
-            sw = sum(e.box.width for e in window_entries) / len(window_entries)
-            sh = sum(e.box.height for e in window_entries) / len(window_entries)
+
+        # Initialize EMA state from the first entry.
+        ema_x = float(ordered[0].box.x)
+        ema_y = float(ordered[0].box.y)
+        ema_w = float(ordered[0].box.width)
+        ema_h = float(ordered[0].box.height)
+
+        smoothed: list[Frame_Region_Entry] = [ordered[0]]
+
+        for entry in ordered[1:]:
+            raw_x = float(entry.box.x)
+            raw_y = float(entry.box.y)
+            raw_w = float(entry.box.width)
+            raw_h = float(entry.box.height)
+
+            # Check if the movement is within the lock threshold (noise).
+            dx = abs(raw_x - ema_x)
+            dy = abs(raw_y - ema_y)
+            dw = abs(raw_w - ema_w)
+            dh = abs(raw_h - ema_h)
+
+            if dx <= lock_threshold and dy <= lock_threshold and dw <= lock_threshold and dh <= lock_threshold:
+                # Position locked — keep the previous smoothed values.
+                pass
+            else:
+                # Genuine motion — update EMA.
+                ema_x = ema_alpha * raw_x + (1.0 - ema_alpha) * ema_x
+                ema_y = ema_alpha * raw_y + (1.0 - ema_alpha) * ema_y
+                ema_w = ema_alpha * raw_w + (1.0 - ema_alpha) * ema_w
+                ema_h = ema_alpha * raw_h + (1.0 - ema_alpha) * ema_h
+
             new_box = Bounding_Box(
-                int(round(sx)),
-                int(round(sy)),
-                max(1, int(round(sw))),
-                max(1, int(round(sh))),
+                max(0, int(round(ema_x))),
+                max(0, int(round(ema_y))),
+                max(1, int(round(ema_w))),
+                max(1, int(round(ema_h))),
             )
             smoothed.append(
                 Frame_Region_Entry(

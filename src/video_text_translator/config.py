@@ -277,6 +277,8 @@ def build_config(merged: dict[str, Any]) -> Config:
             center_distance_ratio=float(trk_d.get("center_distance_ratio", 0.10)),
             n_inactive=int(trk_d.get("n_inactive", 3)),
             max_active_segments=int(trk_d.get("max_active_segments", 100)),
+            smooth_lock_threshold=int(trk_d.get("smooth_lock_threshold", 3)),
+            smooth_ema_alpha=float(trk_d.get("smooth_ema_alpha", 0.3)),
         )
 
         ip_d = merged.get("inpainter", {}) or {}

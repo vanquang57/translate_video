@@ -244,6 +244,8 @@ class Tracker_Config:
     center_distance_ratio: float = 0.10
     n_inactive: int = 3
     max_active_segments: int = 100
+    smooth_lock_threshold: int = 3  # px — jitter below this is locked out
+    smooth_ema_alpha: float = 0.3   # EMA responsiveness (0, 1]
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.iou_threshold <= 1.0):
@@ -268,6 +270,16 @@ class Tracker_Config:
             raise ValueError(
                 f"tracker.max_active_segments must be in [1, 1000] "
                 f"(got {self.max_active_segments})"
+            )
+        if not (0 <= self.smooth_lock_threshold <= 20):
+            raise ValueError(
+                f"tracker.smooth_lock_threshold must be in [0, 20] "
+                f"(got {self.smooth_lock_threshold})"
+            )
+        if not (0.0 < self.smooth_ema_alpha <= 1.0):
+            raise ValueError(
+                f"tracker.smooth_ema_alpha must be in (0.0, 1.0] "
+                f"(got {self.smooth_ema_alpha})"
             )
 
 

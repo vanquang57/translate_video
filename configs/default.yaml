@@ -18,6 +18,8 @@ tracker:
   center_distance_ratio: 0.10         # (0.0, 1.0]  fraction of frame diagonal
   n_inactive: 3                       # [1, 30]
   max_active_segments: 100            # [1, 1000]
+  smooth_lock_threshold: 3            # [0, 20] px — jitter dưới ngưỡng này bị khóa (không di chuyển)
+  smooth_ema_alpha: 0.3               # (0.0, 1.0] — hệ số EMA, nhỏ = mượt hơn, lớn = phản ứng nhanh hơn
 
 inpainter:
   algorithm: telea         # telea | ns
@@ -49,12 +51,12 @@ translator:
     # Khi LLM API thất bại → tự động fallback sang Google Translate (miễn phí, không cần key)
     #
     base_url: "http://localhost:20128/v1"
-    model: free
+    model: vip
     api_key_env: LLM_API_KEY
     max_chars_target: 0    # 0 = không giới hạn độ dài bản dịch
     rpm: 15                # giới hạn request/phút (tùy proxy, 9Router thường không giới hạn)
     timeout_seconds: 30.0
-    batch_size: 10         # [1, 20] — số lượng text gộp trong 1 lần gọi API (tiết kiệm request)
+    batch_size: 20         # [1, 20] — số lượng text gộp trong 1 lần gọi API (tiết kiệm request)
 
 renderer:
   font_path: fonts/NotoSans-Regular.ttf

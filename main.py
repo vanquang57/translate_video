@@ -104,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
         n_inactive=config.tracker.n_inactive,
         ocr_stride=config.performance.ocr_stride,
         max_active_segments=config.tracker.max_active_segments,
+        smooth_lock_threshold=config.tracker.smooth_lock_threshold,
+        smooth_ema_alpha=config.tracker.smooth_ema_alpha,
     )
     inpainter = OpenCVInpainter(
         algorithm=config.inpainter.algorithm,
