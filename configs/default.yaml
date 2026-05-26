@@ -95,3 +95,19 @@ performance:
   io_buffer_frames: 8
   max_duration_seconds: 7200           # 2 hours
   max_file_size_bytes: 5368709120      # 5 GB
+
+  # --- Encoder (Pass2 video output) ---
+  # auto: tự detect GPU encoder (nvenc > qsv > amf > libx264)
+  # cpu: luôn dùng libx264 (chạy mọi máy)
+  # nvenc: NVIDIA GPU (GTX 600+)
+  # qsv: Intel QuickSync (CPU Intel Gen 6+)
+  # amf: AMD GPU
+  encoder: auto
+  encoder_preset: fast                 # ultrafast | fast | medium
+
+  # --- Pass2 parallelism ---
+  # auto: parallel nếu >= 4 cores, sequential nếu ít hơn
+  # sequential: single-thread (an toàn, dùng ít RAM)
+  # parallel: multi-thread pipeline (nhanh hơn 2-4x)
+  pass2_mode: auto
+  parallel_workers: 0                  # 0 = auto (số cores - 2), hoặc chỉ định cụ thể [1-32]

@@ -402,6 +402,10 @@ class Overflow_Config:
             )
 
 
+Encoder_Mode = Literal["auto", "cpu", "nvenc", "qsv", "amf"]
+Pass2_Mode = Literal["auto", "sequential", "parallel"]
+
+
 @dataclass(frozen=True, slots=True)
 class Performance_Config:
     ocr_stride: int = 3
@@ -409,6 +413,10 @@ class Performance_Config:
     io_buffer_frames: int = 8
     max_duration_seconds: int = 7200
     max_file_size_bytes: int = 5 * 1024 * 1024 * 1024  # 5 GB
+    encoder: Encoder_Mode = "auto"
+    encoder_preset: str = "fast"
+    pass2_mode: Pass2_Mode = "auto"
+    parallel_workers: int = 0  # 0 = auto (number of CPU cores)
 
     def __post_init__(self) -> None:
         if not (1 <= self.ocr_stride <= 10):
@@ -433,6 +441,26 @@ class Performance_Config:
             raise ValueError(
                 f"performance.max_file_size_bytes must be > 0 "
                 f"(got {self.max_file_size_bytes})"
+            )
+        if self.encoder not in ("auto", "cpu", "nvenc", "qsv", "amf"):
+            raise ValueError(
+                f'performance.encoder must be one of "auto", "cpu", "nvenc", "qsv", "amf" '
+                f'(got "{self.encoder}")'
+            )
+        if self.encoder_preset not in ("ultrafast", "fast", "medium"):
+            raise ValueError(
+                f'performance.encoder_preset must be "ultrafast", "fast", or "medium" '
+                f'(got "{self.encoder_preset}")'
+            )
+        if self.pass2_mode not in ("auto", "sequential", "parallel"):
+            raise ValueError(
+                f'performance.pass2_mode must be "auto", "sequential", or "parallel" '
+                f'(got "{self.pass2_mode}")'
+            )
+        if not (0 <= self.parallel_workers <= 32):
+            raise ValueError(
+                f"performance.parallel_workers must be in [0, 32] "
+                f"(got {self.parallel_workers})"
             )
 
 

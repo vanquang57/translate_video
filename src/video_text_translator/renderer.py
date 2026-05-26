@@ -435,22 +435,55 @@ class PillowRenderer:
         plan: _LayoutPlan,
         style: Style_Preset,
     ) -> np.ndarray:
-        rgb = frame[..., ::-1].copy()
-        img = Image.fromarray(rgb).convert("RGBA")
-        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        # Optimized crop-only compositing: instead of converting the entire
+        # frame (e.g. 1920x1080 = 2M pixels) to PIL and back, we only
+        # convert the small region around the text box. This reduces memory
+        # copies by ~95% for typical subtitle boxes (200x40 px).
+        h_frame, w_frame = frame.shape[:2]
+
+        # Compute the drawing region with padding for shadow/stroke overflow.
+        pad = max(
+            style.stroke_width if style.stroke_enabled else 0,
+            max(abs(style.shadow_offset[0]), abs(style.shadow_offset[1]))
+            if style.shadow_enabled else 0,
+        ) + 2  # extra safety margin
+
+        crop_x1 = max(0, plan.box.x - pad)
+        crop_y1 = max(0, plan.box.y - pad)
+        crop_x2 = min(w_frame, plan.box.x2 + pad)
+        crop_y2 = min(h_frame, plan.box.y2 + pad)
+        crop_w = crop_x2 - crop_x1
+        crop_h = crop_y2 - crop_y1
+
+        if crop_w <= 0 or crop_h <= 0:
+            return frame
+
+        # Extract the crop region and convert only that to PIL.
+        crop_bgr = frame[crop_y1:crop_y2, crop_x1:crop_x2].copy()
+        crop_rgb = crop_bgr[..., ::-1]
+        img = Image.fromarray(crop_rgb).convert("RGBA")
+        overlay = Image.new("RGBA", (crop_w, crop_h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
 
         font = self._get_font(plan.font_path, plan.font_size)
         block_w, block_h = self._block_size(plan.lines, font, style)
+
+        # Offset: translate absolute frame coords to crop-local coords.
+        off_x = crop_x1
+        off_y = crop_y1
+
         # Draw background covering the box used for layout.
         if style.background_enabled and style.background_alpha > 0:
             bg = (*style.background_rgb, style.background_alpha)
             draw.rectangle(
-                ((plan.box.x, plan.box.y), (plan.box.x2 - 1, plan.box.y2 - 1)),
+                (
+                    (plan.box.x - off_x, plan.box.y - off_y),
+                    (plan.box.x2 - 1 - off_x, plan.box.y2 - 1 - off_y),
+                ),
                 fill=bg,
             )
 
-        # Center the whole text block inside plan.box.
+        # Center the whole text block inside plan.box (in crop-local coords).
         cx, cy = plan.box.center
         block_x = int(round(cx - block_w / 2))
         block_y = int(round(cy - block_h / 2))
@@ -463,9 +496,13 @@ class PillowRenderer:
             line_x = max(plan.box.x, min(line_x, plan.box.x2 - line_w))
             line_y = block_y + i * plan.line_height
 
+            # Convert to crop-local coordinates.
+            local_x = line_x - off_x
+            local_y = line_y - off_y
+
             if style.shadow_enabled and style.shadow_offset != (0, 0):
-                sx = line_x + style.shadow_offset[0]
-                sy = line_y + style.shadow_offset[1]
+                sx = local_x + style.shadow_offset[0]
+                sy = local_y + style.shadow_offset[1]
                 draw.text(
                     (sx, sy),
                     line,
@@ -474,7 +511,7 @@ class PillowRenderer:
                 )
             stroke_w = style.stroke_width if style.stroke_enabled else 0
             draw.text(
-                (line_x, line_y),
+                (local_x, local_y),
                 line,
                 font=font,
                 fill=(*style.text_rgb, 255),
@@ -482,6 +519,11 @@ class PillowRenderer:
                 stroke_fill=(*style.stroke_rgb, 255),
             )
 
+        # Composite only the crop region and paste back.
         composed = Image.alpha_composite(img, overlay).convert("RGB")
-        out = np.asarray(composed)
-        return out[..., ::-1].copy()
+        crop_result = np.asarray(composed)[..., ::-1].copy()
+
+        # Write the rendered crop back into the frame (in-place for speed).
+        out = frame.copy()
+        out[crop_y1:crop_y2, crop_x1:crop_x2] = crop_result
+        return out

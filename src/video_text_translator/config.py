@@ -106,6 +106,30 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--compute-mode", choices=["cpu", "gpu", "CPU", "GPU"])
     parser.add_argument("--ocr-stride", type=int, dest="ocr_stride")
     parser.add_argument("--ocr-downscale", type=float, dest="ocr_downscale")
+    parser.add_argument(
+        "--encoder",
+        choices=["auto", "cpu", "nvenc", "qsv", "amf"],
+        dest="encoder",
+        help="Video encoder: auto (detect GPU), cpu (libx264), nvenc, qsv, amf",
+    )
+    parser.add_argument(
+        "--encoder-preset",
+        choices=["ultrafast", "fast", "medium"],
+        dest="encoder_preset",
+        help="Encoder speed/quality tradeoff (default: fast)",
+    )
+    parser.add_argument(
+        "--pass2-mode",
+        choices=["auto", "sequential", "parallel"],
+        dest="pass2_mode",
+        help="Pass2 threading: auto, sequential, or parallel",
+    )
+    parser.add_argument(
+        "--parallel-workers",
+        type=int,
+        dest="parallel_workers",
+        help="Number of parallel workers for pass2 (0=auto)",
+    )
     parser.add_argument("--confidence", type=float, dest="confidence_threshold")
     parser.add_argument("--batch-size", type=int, dest="batch_size")
     parser.add_argument(
@@ -217,6 +241,14 @@ def cli_overrides(ns: argparse.Namespace) -> dict[str, Any]:
         performance["ocr_stride"] = ns.ocr_stride
     if ns.ocr_downscale is not None:
         performance["ocr_downscale"] = ns.ocr_downscale
+    if hasattr(ns, "encoder") and ns.encoder is not None:
+        performance["encoder"] = ns.encoder
+    if hasattr(ns, "encoder_preset") and ns.encoder_preset is not None:
+        performance["encoder_preset"] = ns.encoder_preset
+    if hasattr(ns, "pass2_mode") and ns.pass2_mode is not None:
+        performance["pass2_mode"] = ns.pass2_mode
+    if hasattr(ns, "parallel_workers") and ns.parallel_workers is not None:
+        performance["parallel_workers"] = ns.parallel_workers
     if performance:
         out["performance"] = performance
 
@@ -354,6 +386,10 @@ def build_config(merged: dict[str, Any]) -> Config:
             max_file_size_bytes=int(
                 perf_d.get("max_file_size_bytes", 5 * 1024 * 1024 * 1024)
             ),
+            encoder=str(perf_d.get("encoder", "auto")).lower(),
+            encoder_preset=str(perf_d.get("encoder_preset", "fast")).lower(),
+            pass2_mode=str(perf_d.get("pass2_mode", "auto")).lower(),
+            parallel_workers=int(perf_d.get("parallel_workers", 0)),
         )
 
         return Config(

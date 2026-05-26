@@ -32,9 +32,11 @@ import cv2
 import numpy as np
 
 from .detector import IDetector
+from .encoder import FFmpegEncoder
 from .errors import InvalidInputError, OutputWriteError, PipelineError
 from .inpainter import IInpainter
 from .models import Bounding_Box, Config, Frame_Region_Entry, Text_Segment
+from .parallel_pass2 import ParallelPass2, _should_use_parallel
 from .progress import ProgressReporter
 from .renderer import IRenderer
 from .tracker import ITracker
@@ -277,19 +279,8 @@ class Pipeline:
         segments: Sequence[Text_Segment],
         translations: dict[str, str],
     ) -> None:
-        # Index entries by frame_index for O(1) lookup per frame.
-        per_frame: dict[int, list[tuple[Text_Segment, Frame_Region_Entry]]] = {}
-        for seg in segments:
-            for entry in seg.entries:
-                per_frame.setdefault(entry.frame_index, []).append((seg, entry))
-
         # Pre-compute one stable font size per segment using the SMALLEST
-        # box the segment ever has. Re-fitting per frame caused visible
-        # text wobble when the OCR box jittered by a couple of pixels.
-        # If the translated text does NOT fit in the smallest box even at
-        # font_size_min, leave fixed_font_size unset so the renderer's
-        # overflow cascade (expand bbox / word wrap / condensed font) can
-        # auto-fit per frame instead.
+        # box the segment ever has.
         fixed_font_size: dict[str, int | None] = {}
         for seg in segments:
             text_vi = translations.get(seg.segment_id, seg.canonical_text)
@@ -305,22 +296,90 @@ class Pipeline:
                 size = None
             fixed_font_size[seg.segment_id] = size
 
-        tmp_path = self._tmp_video_path()
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(tmp_path, fourcc, fps, (width, height))
-        if not writer.isOpened():
-            raise OutputWriteError(
-                f"cannot open VideoWriter at {tmp_path}"
+        use_parallel = _should_use_parallel(self.config.performance)
+
+        if use_parallel:
+            self._pass2_parallel(
+                width, height, fps, n_frames, segments, translations,
+                fixed_font_size,
             )
+        else:
+            self._pass2_sequential(
+                width, height, fps, n_frames, segments, translations,
+                fixed_font_size,
+            )
+
+    def _pass2_parallel(
+        self,
+        width: int,
+        height: int,
+        fps: float,
+        n_frames: int,
+        segments: Sequence[Text_Segment],
+        translations: dict[str, str],
+        fixed_font_size: dict[str, int | None],
+    ) -> None:
+        """Pass2 using multi-threaded pipeline with FFmpeg encoder."""
+        self.progress.start(n_frames, "pass2 inpaint+render (parallel)")
+        try:
+            executor = ParallelPass2(
+                config=self.config,
+                inpainter=self.inpainter,
+                renderer=self.renderer,
+                segments=segments,
+                translations=translations,
+                width=width,
+                height=height,
+                fps=fps,
+                n_frames=n_frames,
+                fixed_font_size=fixed_font_size,
+                progress=self.progress,
+            )
+            tmp_path = executor.run()
+            self._tmp_video = tmp_path
+        finally:
+            self.progress.close()
+
+    def _pass2_sequential(
+        self,
+        width: int,
+        height: int,
+        fps: float,
+        n_frames: int,
+        segments: Sequence[Text_Segment],
+        translations: dict[str, str],
+        fixed_font_size: dict[str, int | None],
+    ) -> None:
+        """Pass2 using single-threaded loop with FFmpeg encoder."""
+        # Index entries by frame_index for O(1) lookup per frame.
+        per_frame: dict[int, list[tuple[Text_Segment, Frame_Region_Entry]]] = {}
+        for seg in segments:
+            for entry in seg.entries:
+                per_frame.setdefault(entry.frame_index, []).append((seg, entry))
+
+        tmp_path = self._tmp_video_path()
+        perf = self.config.performance
+
+        # Use FFmpeg encoder instead of cv2.VideoWriter for better
+        # performance and hardware acceleration support.
+        encoder = FFmpegEncoder(
+            output_path=tmp_path,
+            width=width,
+            height=height,
+            fps=fps,
+            encoder_mode=perf.encoder,
+            encoder_preset=perf.encoder_preset,
+        )
+        encoder.open()
 
         cap = cv2.VideoCapture(self.config.input_path)
         if not cap.isOpened():
-            writer.release()
+            encoder.close()
             raise OutputWriteError(
                 f"cannot reopen input for pass 2: {self.config.input_path}"
             )
 
-        self.progress.start(n_frames, "pass2 inpaint+render")
+        self.progress.start(n_frames, "pass2 inpaint+render (sequential)")
         frame_index = 0
         try:
             while True:
@@ -343,12 +402,12 @@ class Pipeline:
                             fixed_font_size=fixed_font_size.get(seg.segment_id),
                             frame_size=(width, height),
                         )
-                writer.write(frame)
+                encoder.write(frame)
                 self.progress.update(1)
                 frame_index += 1
         finally:
             cap.release()
-            writer.release()
+            encoder.close()
             self.progress.close()
 
         self._tmp_video = tmp_path
