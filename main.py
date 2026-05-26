@@ -58,7 +58,7 @@ from video_text_translator.progress import ProgressReporter  # noqa: E402
 from video_text_translator.renderer import PillowRenderer  # noqa: E402
 from video_text_translator.tracker import IoUContentTracker  # noqa: E402
 from video_text_translator.translator import GoogleTranslator  # noqa: E402
-from video_text_translator.translator_gemini import GeminiTranslator  # noqa: E402
+from video_text_translator.translator_llm import LlmTranslator  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -111,10 +111,10 @@ def main(argv: list[str] | None = None) -> int:
         padding=config.inpainter.padding,
     )
     translator: object
-    if config.translator.backend == "gemini":
-        logger.info("translator backend: Gemini (%s)", config.translator.gemini.model)
-        translator = GeminiTranslator(
-            config=config.translator.gemini,
+    if config.translator.backend == "llm":
+        logger.info("translator backend: LLM (%s via %s)", config.translator.llm.model, config.translator.llm.base_url)
+        translator = LlmTranslator(
+            config=config.translator.llm,
             max_retries=config.translator.max_retries,
         )
     else:

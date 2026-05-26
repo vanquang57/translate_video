@@ -17,7 +17,7 @@ from .errors import InvalidConfigError
 from .models import (
     Config,
     Detector_Config,
-    Gemini_Config,
+    Llm_Config,
     Inpainter_Config,
     Overflow_Config,
     Performance_Config,
@@ -117,12 +117,12 @@ def build_argparser() -> argparse.ArgumentParser:
         help="CPU threads for OCR (0 = auto, all cores)",
     )
     parser.add_argument(
-        "--translator", choices=["google", "gemini"], dest="translator_backend",
-        help="Translation backend (default: google; gemini requires GEMINI_API_KEY env var)",
+        "--translator", choices=["google", "llm"], dest="translator_backend",
+        help="Translation backend (default: google; llm dùng OpenAI-compatible API qua 9Router)",
     )
     parser.add_argument(
-        "--gemini-model", dest="gemini_model",
-        help="Gemini model name (default: gemini-2.5-flash-lite)",
+        "--llm-model", dest="llm_model",
+        help="LLM model name hoặc tên combo trên 9Router (default: free)",
     )
     parser.add_argument(
         "--inpaint-algo", choices=["telea", "ns"], dest="inpaint_algo"
@@ -195,10 +195,10 @@ def cli_overrides(ns: argparse.Namespace) -> dict[str, Any]:
         translator["max_chars"] = ns.max_chars
     if ns.translator_backend is not None:
         translator["backend"] = ns.translator_backend
-    if ns.gemini_model is not None:
-        translator.setdefault("gemini", {})["model"] = ns.gemini_model
-        translator.setdefault("gemini", {})["enabled"] = True
-        translator["backend"] = "gemini"
+    if ns.llm_model is not None:
+        translator.setdefault("llm", {})["model"] = ns.llm_model
+        translator.setdefault("llm", {})["enabled"] = True
+        translator["backend"] = "llm"
     if translator:
         out["translator"] = translator
 
@@ -287,26 +287,26 @@ def build_config(merged: dict[str, Any]) -> Config:
         )
 
         tr_d = merged.get("translator", {}) or {}
-        gemini_d = tr_d.get("gemini", {}) or {}
-        gemini = Gemini_Config(
-            enabled=bool(gemini_d.get("enabled", False)),
-            model=str(gemini_d.get("model", "gemini-2.5-flash-lite")),
-            api_key_env=str(gemini_d.get("api_key_env", "GEMINI_API_KEY")),
-            base_url=str(gemini_d.get("base_url", "")),
-            max_chars_target=int(gemini_d.get("max_chars_target", 0)),
-            rpm=int(gemini_d.get("rpm", 15)),
-            timeout_seconds=float(gemini_d.get("timeout_seconds", 30.0)),
-            batch_size=int(gemini_d.get("batch_size", 10)),
+        llm_d = tr_d.get("llm", {}) or {}
+        llm = Llm_Config(
+            enabled=bool(llm_d.get("enabled", False)),
+            model=str(llm_d.get("model", "free")),
+            api_key_env=str(llm_d.get("api_key_env", "LLM_API_KEY")),
+            base_url=str(llm_d.get("base_url", "")),
+            max_chars_target=int(llm_d.get("max_chars_target", 0)),
+            rpm=int(llm_d.get("rpm", 30)),
+            timeout_seconds=float(llm_d.get("timeout_seconds", 30.0)),
+            batch_size=int(llm_d.get("batch_size", 10)),
         )
         # Resolve effective backend: explicit `backend` takes precedence,
-        # otherwise the legacy `gemini.enabled: true` flag enables it.
-        backend = str(tr_d.get("backend", "gemini" if gemini.enabled else "google")).lower()
+        # otherwise the `llm.enabled: true` flag enables it.
+        backend = str(tr_d.get("backend", "llm" if llm.enabled else "google")).lower()
         translator = Translator_Config(
             backend=backend,  # type: ignore[arg-type]
             timeout_seconds=float(tr_d.get("timeout_seconds", 10.0)),
             max_chars=int(tr_d.get("max_chars", 5000)),
             max_retries=int(tr_d.get("max_retries", 3)),
-            gemini=gemini,
+            llm=llm,
         )
 
         rd_d = merged.get("renderer", {}) or {}

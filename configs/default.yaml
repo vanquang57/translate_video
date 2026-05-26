@@ -25,13 +25,13 @@ inpainter:
   padding: 4               # [0, 20]
 
 translator:
-  backend: gemini          # google | gemini  (gemini requires GEMINI_API_KEY env var)
+  backend: llm             # google | llm  (llm dùng OpenAI-compatible API qua 9Router/OpenRouter)
   timeout_seconds: 10.0    # (0, 60]
   max_chars: 5000          # [1, 10000]
   max_retries: 3           # [0, 10]
-  gemini:
+  llm:
     enabled: true
-    # --- Cấu hình LLM API (bắt buộc dùng OpenAI-compatible endpoint) ---
+    # --- Cấu hình LLM API (OpenAI-compatible endpoint) ---
     #
     # base_url: URL của proxy/API endpoint (BẮT BUỘC)
     #   - 9Router local:  "http://localhost:20128/v1"
@@ -42,15 +42,15 @@ translator:
     #   - 9Router: tên combo bạn đặt trong dashboard (ví dụ: "free", "fast", v.v.)
     #   - OpenRouter: "google/gemini-2.5-flash-lite", "anthropic/claude-3-haiku", v.v.
     #
-    # api_key_env: tên biến môi trường chứa API key
+    # api_key_env: tên biến môi trường chứa API key (đọc từ file .env)
     #   - 9Router: có thể dùng key bất kỳ (ví dụ: "sk-anything")
     #   - OpenRouter: key từ openrouter.ai
     #
     # Khi LLM API thất bại → tự động fallback sang Google Translate (miễn phí, không cần key)
     #
     base_url: "http://localhost:20128/v1"
-    model: vip
-    api_key_env: GEMINI_API_KEY
+    model: free
+    api_key_env: LLM_API_KEY
     max_chars_target: 0    # 0 = không giới hạn độ dài bản dịch
     rpm: 15                # giới hạn request/phút (tùy proxy, 9Router thường không giới hạn)
     timeout_seconds: 30.0
@@ -59,7 +59,7 @@ translator:
 renderer:
   font_path: fonts/NotoSans-Regular.ttf
   font_size_max: 64        # [8, 512]
-  font_size_min: 16        # [6, font_size_max]
+  font_size_min: 20        # [6, font_size_max]
   text_rgb: [255, 255, 0]
 
   # Viền text (stroke) - bật/tắt + màu + độ dày
@@ -81,7 +81,7 @@ renderer:
   # Thứ tự áp dụng: 1) expand bbox -> 2) word wrap -> 3) condensed font.
   overflow:
     expand_bbox_enabled: true
-    expand_bbox_max: 1.5             # [1.0, 4.0] - mở rộng box tối đa N lần
+    expand_bbox_max: 1.2             # [1.0, 4.0] - mở rộng box tối đa N lần
     word_wrap_enabled: true
     word_wrap_max_lines: 3           # [1, 10]
     condensed_enabled: true

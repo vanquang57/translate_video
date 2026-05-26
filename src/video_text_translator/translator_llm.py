@@ -20,7 +20,7 @@ import time
 from typing import Sequence
 
 from .errors import InvalidConfigError
-from .models import Gemini_Config, Text_Segment, Translation_Result
+from .models import Llm_Config, Text_Segment, Translation_Result
 from .text_utils import normalize_text
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ _PROMPT_TEMPLATE = (
     "tiếng Việt theo các quy tắc sau:\n"
     "1. Trả về DUY NHẤT bản dịch tiếng Việt, không thêm chú thích, không "
     "đặt dấu nháy, không xuống dòng.\n"
-    "2. Giữ giọng văn tự nhiên, phù hợp ngữ cảnh phụ đề video hài.\n"
+    "2. Giữ giọng văn tự nhiên, phù hợp ngữ cảnh phụ đề video.\n"
     "3. Bản dịch nên ngắn gọn, tương đương độ dài câu gốc nếu có thể.\n"
     "{length_constraint}"
     "Câu gốc:\n{source}"
@@ -42,7 +42,7 @@ _BATCH_PROMPT_TEMPLATE = (
     "Bạn là biên dịch viên Hán-Việt. Dịch các chuỗi tiếng Trung dưới đây sang "
     "tiếng Việt theo các quy tắc sau:\n"
     "1. Trả về DUY NHẤT bản dịch tiếng Việt cho mỗi dòng, không thêm chú thích.\n"
-    "2. Giữ giọng văn tự nhiên, phù hợp ngữ cảnh phụ đề video hài.\n"
+    "2. Giữ giọng văn tự nhiên, phù hợp ngữ cảnh phụ đề video.\n"
     "3. Mỗi bản dịch trên một dòng riêng, đánh số theo thứ tự (1. bản dịch, 2. bản dịch, ...).\n"
     "4. Không thêm dấu nháy, không thêm chú thích, không thêm dòng trống.\n"
     "{length_constraint}"
@@ -50,7 +50,7 @@ _BATCH_PROMPT_TEMPLATE = (
 )
 
 
-class GeminiTranslator:
+class LlmTranslator:
     """Translator dùng OpenAI-compatible API với fallback về Google Translate.
 
     Yêu cầu:
@@ -61,7 +61,7 @@ class GeminiTranslator:
 
     def __init__(
         self,
-        config: Gemini_Config,
+        config: Llm_Config,
         max_retries: int = 3,
         backoff_seconds: tuple[float, ...] = (1.0, 2.0, 4.0),
     ) -> None:
@@ -467,3 +467,7 @@ class GeminiTranslator:
             return None
 
         return translations
+
+
+# Alias cũ để không break import
+GeminiTranslator = LlmTranslator

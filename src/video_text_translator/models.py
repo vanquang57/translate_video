@@ -289,54 +289,59 @@ class Inpainter_Config:
 
 
 @dataclass(frozen=True, slots=True)
-class Gemini_Config:
+class Llm_Config:
+    """Cấu hình LLM translator (OpenAI-compatible API qua 9Router, OpenRouter, v.v.)"""
     enabled: bool = False
-    model: str = "gemini-2.5-flash-lite"
-    api_key_env: str = "GEMINI_API_KEY"
-    base_url: str = ""  # custom endpoint URL (e.g. 9Router, OpenRouter); empty = default Google API
-    max_chars_target: int = 0  # 0 = no length cap; otherwise the prompt asks the LLM to stay <= this many chars
-    rpm: int = 15  # free-tier requests per minute (Flash-Lite)
+    model: str = "free"
+    api_key_env: str = "LLM_API_KEY"
+    base_url: str = ""  # endpoint URL (ví dụ: http://localhost:20128/v1)
+    max_chars_target: int = 0  # 0 = không giới hạn; khác 0 = yêu cầu dịch ngắn hơn N ký tự
+    rpm: int = 30  # giới hạn request/phút
     timeout_seconds: float = 30.0
-    batch_size: int = 10  # number of texts per batch API call [1, 20]
+    batch_size: int = 10  # [1, 20] — số text gộp trong 1 lần gọi API
 
     def __post_init__(self) -> None:
         if not self.model:
-            raise ValueError("translator.gemini.model must be non-empty")
+            raise ValueError("translator.llm.model must be non-empty")
         if not self.api_key_env:
-            raise ValueError("translator.gemini.api_key_env must be non-empty")
+            raise ValueError("translator.llm.api_key_env must be non-empty")
         if self.max_chars_target < 0:
             raise ValueError(
-                f"translator.gemini.max_chars_target must be >= 0 "
+                f"translator.llm.max_chars_target must be >= 0 "
                 f"(got {self.max_chars_target})"
             )
         if not (1 <= self.rpm <= 1000):
             raise ValueError(
-                f"translator.gemini.rpm must be in [1, 1000] (got {self.rpm})"
+                f"translator.llm.rpm must be in [1, 1000] (got {self.rpm})"
             )
         if not (0.0 < self.timeout_seconds <= 120.0):
             raise ValueError(
-                f"translator.gemini.timeout_seconds must be in (0, 120] "
+                f"translator.llm.timeout_seconds must be in (0, 120] "
                 f"(got {self.timeout_seconds})"
             )
         if not (1 <= self.batch_size <= 20):
             raise ValueError(
-                f"translator.gemini.batch_size must be in [1, 20] "
+                f"translator.llm.batch_size must be in [1, 20] "
                 f"(got {self.batch_size})"
             )
 
 
+# Giữ alias cũ để không break import cũ
+Gemini_Config = Llm_Config
+
+
 @dataclass(frozen=True, slots=True)
 class Translator_Config:
-    backend: Literal["google", "gemini"] = "google"
+    backend: Literal["google", "llm"] = "google"
     timeout_seconds: float = 10.0
     max_chars: int = 5000
     max_retries: int = 3
-    gemini: Gemini_Config = field(default_factory=Gemini_Config)
+    llm: Llm_Config = field(default_factory=Llm_Config)
 
     def __post_init__(self) -> None:
-        if self.backend not in ("google", "gemini"):
+        if self.backend not in ("google", "llm"):
             raise ValueError(
-                f'translator.backend must be "google" or "gemini" '
+                f'translator.backend must be "google" or "llm" '
                 f'(got "{self.backend}")'
             )
         if not (0.0 < self.timeout_seconds <= 60.0):
