@@ -80,35 +80,84 @@ GPU mode (đã cài `paddlepaddle-gpu`):
 python main.py -i sample.mp4 -o out.mp4 --compute-mode gpu
 ```
 
-### Dùng Gemini cho dịch chất lượng cao
+### Dùng LLM API cho dịch chất lượng cao (9Router / OpenRouter)
 
-Mặc định tool dùng Google Translate (không cần API key). Nếu muốn bản dịch chất lượng cao và ngắn gọn hơn, dùng Gemini:
+Mặc định tool dùng Google Translate (miễn phí, không cần key). Nếu muốn bản dịch chất lượng cao hơn, dùng LLM qua proxy OpenAI-compatible:
 
-1. Lấy API key tại <https://aistudio.google.com/apikey>
-2. Set environment variable một lần:
+#### Cách 1: Dùng 9Router (khuyến nghị — miễn phí, chạy local)
 
-   ```cmd
-   setx GEMINI_API_KEY "AIza..."
-   ```
-
-   Đóng terminal hiện tại, mở terminal mới để biến môi trường có hiệu lực.
-3. Bật Gemini qua CLI:
+1. Cài 9Router:
 
    ```cmd
-   python main.py -i sample.mp4 -o out.mp4 --translator gemini
+   npm install -g 9router
+   9router
    ```
 
-   hoặc đặt mặc định trong `configs/default.yaml`:
+   9Router chạy tại `http://localhost:20128`. Mở dashboard tại <http://localhost:20128> để tạo combo.
+
+2. Tạo combo trong 9Router dashboard (ví dụ đặt tên "free"), thêm các provider bạn muốn (Gemini, OpenAI, Claude, v.v.)
+
+3. Set biến môi trường (key bất kỳ nếu 9Router không yêu cầu):
+
+   ```cmd
+   setx GEMINI_API_KEY "sk-anything"
+   ```
+
+4. Cấu hình trong `configs/default.yaml`:
 
    ```yaml
    translator:
      backend: gemini
      gemini:
        enabled: true
-       max_chars_target: 30   # gợi ý LLM dịch ngắn gọn
+       base_url: "http://localhost:20128/v1"
+       model: free              # tên combo trong 9Router
+       api_key_env: GEMINI_API_KEY
+       batch_size: 10           # gộp 10 text/request (tiết kiệm request)
+       rpm: 30
    ```
 
-   Free tier Gemini Flash-Lite cho 15 request/phút, 1000 request/ngày — đủ cho hàng chục video mỗi ngày.
+5. Chạy:
+
+   ```cmd
+   python main.py -i sample.mp4 -o out.mp4 --translator gemini
+   ```
+
+#### Cách 2: Dùng OpenRouter (trả phí theo usage)
+
+1. Lấy API key tại <https://openrouter.ai/keys>
+2. Set biến môi trường:
+
+   ```cmd
+   setx GEMINI_API_KEY "sk-or-v1-..."
+   ```
+
+3. Cấu hình:
+
+   ```yaml
+   translator:
+     backend: gemini
+     gemini:
+       enabled: true
+       base_url: "https://openrouter.ai/api/v1"
+       model: google/gemini-2.5-flash-lite
+       api_key_env: GEMINI_API_KEY
+       batch_size: 10
+       rpm: 30
+   ```
+
+#### Fallback tự động
+
+Khi LLM API thất bại (hết quota, timeout, proxy down, v.v.), tool **tự động fallback sang Google Translate miễn phí** — không cần cấu hình gì thêm. Video vẫn được dịch xong, chỉ chất lượng dịch có thể kém hơn ở những câu bị fallback.
+
+#### Batch translation
+
+Cấu hình `batch_size` (mặc định 10) gộp nhiều text vào 1 request API. Ví dụ video có 50 đoạn text → chỉ gọi 5 request thay vì 50. Giảm thời gian chờ và tiết kiệm quota.
+
+```yaml
+gemini:
+  batch_size: 10   # [1, 20] — số text gộp trong 1 lần gọi
+```
 
 ### Override tham số nhanh
 
@@ -150,6 +199,9 @@ Video 1080p, 3 phút, ocr_stride=3, ocr_downscale=1.5:
 - **`ModuleNotFoundError: No module named 'paddleocr'`** — chưa activate venv hoặc chưa `pip install -r requirements.txt`.
 - **`ffmpeg not found on PATH`** — cài lại FFmpeg và đảm bảo `ffmpeg`/`ffprobe` nằm trong `PATH`. Mở terminal mới sau khi cài.
 - **Lần chạy đầu PaddleOCR tải model rất chậm** — bình thường, model lưu vào `~\.paddleocr\` và sẽ cache cho các lần sau.
+- **`base_url phải được cấu hình`** — bạn bật `translator: gemini` nhưng chưa set `base_url`. Cần trỏ về proxy (9Router, OpenRouter). Xem hướng dẫn ở trên.
+- **LLM API trả 429 / quota exceeded** — hết quota trên provider. Tool sẽ tự fallback sang Google Translate. Nếu muốn tránh, giảm `rpm` hoặc tăng `batch_size`.
+- **Dịch bị fallback Google Translate hết** — kiểm tra 9Router có đang chạy không (`http://localhost:20128`), combo có provider nào active không.
 - **Text Việt bị tràn khỏi vùng gốc** — giảm `font_size_min` hoặc tăng `box` mask: hiện tại MVP fit vào đúng box gốc; có thể cần style khác (background lớn hơn).
 - **Video không có audio output** — nếu input không có audio, output sẽ không có audio (đúng spec). Kiểm tra `ffprobe input.mp4` xem có stream audio không.
 

@@ -30,20 +30,31 @@ translator:
   max_chars: 5000          # [1, 10000]
   max_retries: 3           # [0, 10]
   gemini:
-    enabled: true         # true để dùng Gemini làm backend dịch
-    model: gemini-2.5-flash-lite
+    enabled: true
+    # --- Cấu hình LLM API (bắt buộc dùng OpenAI-compatible endpoint) ---
+    #
+    # base_url: URL của proxy/API endpoint (BẮT BUỘC)
+    #   - 9Router local:  "http://localhost:20128/v1"
+    #   - OpenRouter:     "https://openrouter.ai/api/v1"
+    #   - Bất kỳ proxy OpenAI-compatible nào khác
+    #
+    # model: tên model hoặc tên combo trên proxy
+    #   - 9Router: tên combo bạn đặt trong dashboard (ví dụ: "free", "fast", v.v.)
+    #   - OpenRouter: "google/gemini-2.5-flash-lite", "anthropic/claude-3-haiku", v.v.
+    #
+    # api_key_env: tên biến môi trường chứa API key
+    #   - 9Router: có thể dùng key bất kỳ (ví dụ: "sk-anything")
+    #   - OpenRouter: key từ openrouter.ai
+    #
+    # Khi LLM API thất bại → tự động fallback sang Google Translate (miễn phí, không cần key)
+    #
+    base_url: "http://localhost:20128/v1"
+    model: vip
     api_key_env: GEMINI_API_KEY
-    # --- Cấu hình proxy (9Router / OpenRouter) ---
-    # Nếu base_url rỗng "" → gọi trực tiếp Google Gemini API (mặc định)
-    # Nếu base_url có giá trị → dùng OpenAI-compatible endpoint (9Router, OpenRouter, v.v.)
-    #   Ví dụ 9Router: base_url: "http://localhost:20128/v1"
-    #   Khi đó "model" là tên combo bạn đặt trong 9Router dashboard
-    #   api_key_env vẫn cần set (có thể dùng key bất kỳ nếu 9Router không yêu cầu)
-    base_url: ""
-    max_chars_target: 0    # 0 = không giới hạn; khác 0 = yêu cầu model dịch ngắn hơn N ký tự
-    rpm: 15                # giới hạn request/phút (free tier Gemini = 15-20)
+    max_chars_target: 0    # 0 = không giới hạn độ dài bản dịch
+    rpm: 15                # giới hạn request/phút (tùy proxy, 9Router thường không giới hạn)
     timeout_seconds: 30.0
-    batch_size: 10         # [1, 20] — số lượng text gộp trong 1 lần gọi API
+    batch_size: 10         # [1, 20] — số lượng text gộp trong 1 lần gọi API (tiết kiệm request)
 
 renderer:
   font_path: fonts/NotoSans-Regular.ttf
@@ -77,7 +88,7 @@ renderer:
     condensed_font_path: fonts/NotoSans-Condensed.ttf
 
 performance:
-  ocr_stride: 2                        # [1, 10]
+  ocr_stride: 10                        # [1, 10]
   ocr_downscale: 1.5                   # [1.0, 4.0]
   io_buffer_frames: 8
   max_duration_seconds: 7200           # 2 hours

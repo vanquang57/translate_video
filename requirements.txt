@@ -15,8 +15,7 @@ Pillow==11.3.0
 
 # Translation
 deep-translator==1.11.4
-google-genai==2.6.0    # Gemini SDK (used when translator.gemini.enabled = true)
-openai==1.82.0         # OpenAI SDK (dùng khi base_url trỏ về proxy như 9Router)
+openai==1.82.0         # OpenAI SDK — dùng để gọi LLM qua proxy (9Router, OpenRouter, v.v.)
 
 # Video muxing (audio passthrough)
 ffmpeg-python==0.2.0

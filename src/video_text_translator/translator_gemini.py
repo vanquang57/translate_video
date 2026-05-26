@@ -1,21 +1,13 @@
-"""Gemini-backed translator for higher-quality Chinese -> Vietnamese translation.
+"""Translator sử dụng OpenAI-compatible API (9Router, OpenRouter, v.v.)
 
-Uses the official ``google-genai`` SDK against the public Gemini Developer
-API (free tier is generous enough for our use case).
+Gọi LLM qua endpoint OpenAI-compatible để dịch Trung → Việt.
+Khi API thất bại → tự động fallback về Google Translate (deep-translator, miễn phí).
 
-When ``base_url`` is configured, switches to the OpenAI-compatible client
-so that proxies like 9Router (http://localhost:20128/v1) work seamlessly.
-
-Key behaviour:
-  * Returns the same :class:`Translation_Result` shape as
-    :class:`GoogleTranslator`, so the pipeline does not need to know
-    which backend produced the translation.
-  * In-process cache keyed on stripped source text.
-  * Soft RPM limiter prevents 429s from the free-tier quota; if a 429
-    still occurs we apply exponential backoff just like the deep-translator
-    fallback path.
-  * The prompt explicitly asks for a translation that is short enough to
-    fit a target character budget when ``max_chars_target > 0``.
+Tính năng:
+  * Batch translation: gộp nhiều text trong 1 lần gọi API (cấu hình batch_size)
+  * Cache: không dịch lại text đã dịch trước đó
+  * RPM limiter: giới hạn số request/phút tránh bị rate limit
+  * Fallback: nếu LLM API lỗi → dùng Google Translate miễn phí
 """
 
 from __future__ import annotations
@@ -25,7 +17,7 @@ import os
 import re
 import threading
 import time
-from typing import Any, Sequence
+from typing import Sequence
 
 from .errors import InvalidConfigError
 from .models import Gemini_Config, Text_Segment, Translation_Result
@@ -33,6 +25,7 @@ from .text_utils import normalize_text
 
 logger = logging.getLogger(__name__)
 
+# --- Prompt cho dịch 1 câu ---
 _PROMPT_TEMPLATE = (
     "Bạn là biên dịch viên Hán-Việt. Dịch chuỗi tiếng Trung dưới đây sang "
     "tiếng Việt theo các quy tắc sau:\n"
@@ -44,6 +37,7 @@ _PROMPT_TEMPLATE = (
     "Câu gốc:\n{source}"
 )
 
+# --- Prompt cho dịch batch (nhiều câu 1 lần) ---
 _BATCH_PROMPT_TEMPLATE = (
     "Bạn là biên dịch viên Hán-Việt. Dịch các chuỗi tiếng Trung dưới đây sang "
     "tiếng Việt theo các quy tắc sau:\n"
@@ -57,7 +51,13 @@ _BATCH_PROMPT_TEMPLATE = (
 
 
 class GeminiTranslator:
-    """Gemini-backed translator. Same protocol as :class:`GoogleTranslator`."""
+    """Translator dùng OpenAI-compatible API với fallback về Google Translate.
+
+    Yêu cầu:
+      - base_url phải được cấu hình (ví dụ: http://localhost:20128/v1)
+      - model là tên model/combo trên proxy (ví dụ: "free")
+      - api_key_env chứa tên biến môi trường có API key
+    """
 
     def __init__(
         self,
@@ -68,10 +68,16 @@ class GeminiTranslator:
         api_key = os.environ.get(config.api_key_env, "").strip()
         if not api_key:
             raise InvalidConfigError(
-                f"Gemini translator enabled but environment variable "
-                f"{config.api_key_env!r} is empty. Set it with:\n"
-                f'  setx {config.api_key_env} "AIza..."\n'
-                "and open a new terminal."
+                f"Translator cần API key nhưng biến môi trường "
+                f"{config.api_key_env!r} đang rỗng. Set bằng:\n"
+                f'  setx {config.api_key_env} "your-key"\n'
+                "rồi mở terminal mới."
+            )
+
+        if not config.base_url:
+            raise InvalidConfigError(
+                "base_url phải được cấu hình để dùng OpenAI-compatible API.\n"
+                "Ví dụ: base_url: \"http://localhost:20128/v1\" (9Router)"
             )
 
         self._config = config
@@ -79,18 +85,22 @@ class GeminiTranslator:
         self._backoff = backoff_seconds
         self._cache: dict[str, Translation_Result] = {}
 
-        # Soft RPM limiter: keep the most recent N call timestamps and
-        # sleep just long enough to stay under the configured rate.
+        # RPM limiter
         self._lock = threading.Lock()
         self._call_history: list[float] = []
 
+        # Khởi tạo OpenAI client
         self._client = self._build_client(api_key)
+
+        # Google Translate fallback (lazy init)
+        self._google_fallback = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def translate(self, text: str) -> Translation_Result:
+        """Dịch 1 câu. Thử LLM API trước, nếu lỗi thì fallback Google Translate."""
         if not normalize_text(text):
             return Translation_Result(
                 source_text=text,
@@ -103,12 +113,13 @@ class GeminiTranslator:
         if cached is not None:
             return cached
 
+        # Thử gọi LLM API
         last_error: str | None = None
         attempts = self._max_retries + 1
         for attempt in range(attempts):
             try:
                 self._respect_rpm()
-                translated = self._call_backend(stripped)
+                translated = self._call_llm(stripped)
                 result = Translation_Result(
                     source_text=text,
                     translated_text=translated,
@@ -119,7 +130,7 @@ class GeminiTranslator:
             except Exception as exc:  # noqa: BLE001
                 last_error = f"{type(exc).__name__}: {exc}"
                 logger.warning(
-                    "gemini translator attempt %d/%d failed: %s",
+                    "LLM API attempt %d/%d thất bại: %s",
                     attempt + 1,
                     attempts,
                     last_error,
@@ -127,33 +138,29 @@ class GeminiTranslator:
                 if attempt < self._max_retries and attempt < len(self._backoff):
                     time.sleep(self._backoff[attempt])
 
-        logger.error(
-            "gemini translator: giving up after %d attempts (last error: %s)",
+        # LLM API thất bại hoàn toàn → fallback Google Translate
+        logger.warning(
+            "LLM API thất bại sau %d lần thử, fallback sang Google Translate: %s",
             attempts,
             last_error,
         )
-        return Translation_Result(
-            source_text=text,
-            translated_text=text,
-            status="untranslated",
-            error_message=last_error,
-        )
+        return self._translate_google_fallback(text, stripped)
 
     def translate_segments(
         self, segments: Sequence[Text_Segment]
     ) -> dict[str, Translation_Result]:
-        # Step 1: Handle empty input
+        """Dịch nhiều segments với batch translation + cache + fallback."""
         if not segments:
             return {}
 
         results: dict[str, Translation_Result] = {}
 
-        # Step 2: Cache lookup — check each segment's normalized text
+        # Bước 1: Cache lookup
         segments_needing_translation: list[Text_Segment] = []
         for seg in segments:
             normalized = normalize_text(seg.canonical_text)
 
-            # Passthrough: empty/whitespace-only text
+            # Passthrough: text rỗng
             if not normalized:
                 result = Translation_Result(
                     source_text=seg.canonical_text,
@@ -167,22 +174,19 @@ class GeminiTranslator:
             cached = self._cache.get(normalized)
             if cached is not None:
                 if cached.status in ("translated", "passthrough"):
-                    # Use cached result directly
                     results[seg.segment_id] = cached
                     continue
                 else:
-                    # Status is "untranslated" — re-include for translation
+                    # "untranslated" → thử lại
                     del self._cache[normalized]
                     segments_needing_translation.append(seg)
             else:
                 segments_needing_translation.append(seg)
 
-        # If all segments were resolved from cache, return early
         if not segments_needing_translation:
             return results
 
-        # Step 3: Deduplicate — collect unique normalized texts
-        # Maps normalized_text -> list of segment_ids that share it
+        # Bước 2: Deduplicate
         text_to_segment_ids: dict[str, list[str]] = {}
         unique_texts_ordered: list[str] = []
         for seg in segments_needing_translation:
@@ -192,20 +196,19 @@ class GeminiTranslator:
                 unique_texts_ordered.append(normalized)
             text_to_segment_ids[normalized].append(seg.segment_id)
 
-        # Step 4: Partition unique texts into batches of batch_size
+        # Bước 3: Chia batch
         batch_size = self._config.batch_size
         batches: list[list[str]] = []
         for i in range(0, len(unique_texts_ordered), batch_size):
             batches.append(unique_texts_ordered[i : i + batch_size])
 
-        # Step 5: Call _translate_batch for each partition
-        # Step 6: Store results in cache keyed by normalized text
+        # Bước 4: Dịch từng batch
         for batch in batches:
             batch_results = self._translate_batch(batch)
             for text, result in zip(batch, batch_results):
                 self._cache[text] = result
 
-        # Step 7: Merge — assemble output dict keyed by segment_id
+        # Bước 5: Gộp kết quả
         for seg in segments_needing_translation:
             normalized = normalize_text(seg.canonical_text)
             results[seg.segment_id] = self._cache[normalized]
@@ -216,54 +219,79 @@ class GeminiTranslator:
     # Internals
     # ------------------------------------------------------------------
 
-    def _build_client(self, api_key: str) -> Any:
-        """Khởi tạo client phù hợp với cấu hình.
+    def _build_client(self, api_key: str):
+        """Khởi tạo OpenAI client trỏ về base_url (9Router, OpenRouter, v.v.)"""
+        try:
+            from openai import OpenAI  # type: ignore
+        except ImportError as exc:
+            raise InvalidConfigError(
+                "Package 'openai' chưa cài. Chạy: pip install openai"
+            ) from exc
 
-        - Nếu base_url được set → dùng OpenAI SDK (tương thích 9Router, OpenRouter, v.v.)
-        - Nếu base_url rỗng → dùng Google GenAI SDK (gọi trực tiếp Gemini API)
-        """
-        if self._config.base_url:
-            # --- Chế độ OpenAI-compatible (9Router, OpenRouter, v.v.) ---
+        logger.info(
+            "Translator: dùng endpoint %s (model: %s)",
+            self._config.base_url,
+            self._config.model,
+        )
+        return OpenAI(base_url=self._config.base_url, api_key=api_key)
+
+    def _get_google_fallback(self):
+        """Lazy init Google Translate fallback (deep-translator)."""
+        if self._google_fallback is None:
             try:
-                from openai import OpenAI  # type: ignore
-            except ImportError as exc:
-                raise InvalidConfigError(
-                    "openai package is not installed. Run: pip install openai"
-                ) from exc
-            logger.info(
-                "gemini: sử dụng OpenAI-compatible endpoint: %s (model: %s)",
-                self._config.base_url,
-                self._config.model,
+                from deep_translator import GoogleTranslator  # type: ignore
+                self._google_fallback = GoogleTranslator(source="zh-CN", target="vi")
+                logger.info("Google Translate fallback đã sẵn sàng")
+            except ImportError:
+                logger.error("deep-translator chưa cài, không thể fallback")
+                self._google_fallback = None
+        return self._google_fallback
+
+    def _translate_google_fallback(
+        self, original_text: str, stripped: str
+    ) -> Translation_Result:
+        """Dịch bằng Google Translate miễn phí (fallback khi LLM API lỗi)."""
+        fallback = self._get_google_fallback()
+        if fallback is None:
+            return Translation_Result(
+                source_text=original_text,
+                translated_text=original_text,
+                status="untranslated",
+                error_message="Cả LLM API và Google Translate đều không khả dụng",
             )
-            self._use_openai = True
-            return OpenAI(base_url=self._config.base_url, api_key=api_key)
-        else:
-            # --- Chế độ Google GenAI SDK (mặc định) ---
-            try:
-                from google import genai  # type: ignore
-            except ImportError as exc:
-                raise InvalidConfigError(
-                    "google-genai is not installed. Run: pip install google-genai"
-                ) from exc
-            self._use_openai = False
-            return genai.Client(api_key=api_key)
+        try:
+            translated = fallback.translate(stripped)
+            if not isinstance(translated, str) or not translated.strip():
+                raise RuntimeError("Google Translate trả về kết quả rỗng")
+            result = Translation_Result(
+                source_text=original_text,
+                translated_text=translated.strip(),
+                status="translated",
+            )
+            self._cache[stripped] = result
+            return result
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Google Translate fallback cũng thất bại: %s", exc)
+            return Translation_Result(
+                source_text=original_text,
+                translated_text=original_text,
+                status="untranslated",
+                error_message=f"Fallback failed: {exc}",
+            )
 
     def _respect_rpm(self) -> None:
-        """Sleep just enough to keep us below the configured RPM."""
+        """Chờ nếu cần để không vượt quá RPM limit."""
         rpm = self._config.rpm
         if rpm <= 0:
             return
         with self._lock:
             now = time.monotonic()
-            # Drop calls older than 60 seconds.
             self._call_history = [t for t in self._call_history if now - t < 60.0]
             if len(self._call_history) >= rpm:
                 wait_until = self._call_history[0] + 60.0
                 wait = max(0.0, wait_until - now)
                 if wait > 0:
-                    logger.debug(
-                        "gemini: throttling for %.2fs to respect RPM=%d", wait, rpm
-                    )
+                    logger.debug("Throttling %.2fs (RPM=%d)", wait, rpm)
                     time.sleep(wait)
                     now = time.monotonic()
                     self._call_history = [
@@ -271,38 +299,33 @@ class GeminiTranslator:
                     ]
             self._call_history.append(now)
 
-    def _call_backend(self, text: str) -> str:
+    def _call_llm(self, text: str) -> str:
+        """Gọi LLM API (OpenAI-compatible) để dịch 1 câu."""
         prompt = self._build_prompt(text)
+        response = self._client.chat.completions.create(
+            model=self._config.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=512,
+        )
+        translated = (response.choices[0].message.content or "").strip()
 
-        if self._use_openai:
-            # --- OpenAI-compatible mode (9Router, OpenRouter, v.v.) ---
-            response = self._client.chat.completions.create(
-                model=self._config.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=512,
-            )
-            translated = (response.choices[0].message.content or "").strip()
-        else:
-            # --- Google GenAI SDK mode ---
-            from google.genai import types as genai_types  # type: ignore
-
-            response = self._client.models.generate_content(
-                model=self._config.model,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(
-                    temperature=0.2,
-                    max_output_tokens=512,
-                ),
-            )
-            translated = (response.text or "").strip()
-
-        # Strip any surrounding quotes the model sometimes adds despite the prompt.
-        if len(translated) >= 2 and translated[0] in ("\"", "'") and translated[-1] == translated[0]:
+        # Bỏ dấu nháy bao quanh nếu có
+        if len(translated) >= 2 and translated[0] in ('"', "'") and translated[-1] == translated[0]:
             translated = translated[1:-1].strip()
         if not translated:
-            raise RuntimeError("gemini returned an empty translation")
+            raise RuntimeError("LLM trả về kết quả rỗng")
         return translated
+
+    def _call_llm_batch(self, prompt: str) -> str:
+        """Gọi LLM API cho batch prompt, trả về raw text response."""
+        response = self._client.chat.completions.create(
+            model=self._config.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=2048,
+        )
+        return (response.choices[0].message.content or "").strip()
 
     def _build_prompt(self, source: str) -> str:
         if self._config.max_chars_target > 0:
@@ -316,7 +339,7 @@ class GeminiTranslator:
         )
 
     def _build_batch_prompt(self, texts: list[str]) -> str:
-        """Construct a batch translation prompt with numbered source texts."""
+        """Tạo prompt batch với danh sách đánh số."""
         if self._config.max_chars_target > 0:
             length_constraint = (
                 f"5. Mỗi bản dịch không vượt quá {self._config.max_chars_target} ký tự.\n"
@@ -332,13 +355,7 @@ class GeminiTranslator:
         )
 
     def _translate_batch(self, texts: list[str]) -> list[Translation_Result]:
-        """Translate a batch of texts in a single API call with fallback.
-
-        Each text in *texts* is already normalized (stripped). On success,
-        returns one Translation_Result per text with status "translated".
-        On failure (API exception or parse mismatch), falls back to
-        individual translate() calls for each text.
-        """
+        """Dịch batch texts qua LLM API. Nếu lỗi → fallback Google Translate từng câu."""
         prompt = self._build_batch_prompt(texts)
         last_error: str | None = None
         attempts = self._max_retries + 1
@@ -346,49 +363,25 @@ class GeminiTranslator:
         for attempt in range(attempts):
             try:
                 self._respect_rpm()
-
-                if self._use_openai:
-                    # --- OpenAI-compatible mode ---
-                    response = self._client.chat.completions.create(
-                        model=self._config.model,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=0.2,
-                        max_tokens=1024 + 256 * len(texts),
-                    )
-                    raw_text = (response.choices[0].message.content or "").strip()
-                else:
-                    # --- Google GenAI SDK mode ---
-                    from google.genai import types as genai_types  # type: ignore
-
-                    response = self._client.models.generate_content(
-                        model=self._config.model,
-                        contents=prompt,
-                        config=genai_types.GenerateContentConfig(
-                            temperature=0.2,
-                            max_output_tokens=1024 + 256 * len(texts),
-                        ),
-                    )
-                    raw_text = (response.text or "").strip()
-
+                raw_text = self._call_llm_batch(prompt)
                 parsed = self._parse_batch_response(raw_text, len(texts))
 
                 if parsed is None:
-                    # Count mismatch — fall back to individual translation
                     logger.warning(
-                        "gemini batch: parse failure (count mismatch) for batch "
-                        "of %d texts, falling back to individual translation",
+                        "Batch parse lỗi (số dòng không khớp) cho %d texts, "
+                        "fallback từng câu",
                         len(texts),
                     )
-                    return [self.translate(t) for t in texts]
+                    return self._fallback_individual(texts)
 
-                # Check for empty parsed items and handle them
+                # Kiểm tra item rỗng
                 results: list[Translation_Result] = []
                 empty_indices: list[int] = []
 
                 for i, translated in enumerate(parsed):
                     if not translated.strip():
                         empty_indices.append(i)
-                        results.append(None)  # type: ignore[arg-type]  # placeholder
+                        results.append(None)  # type: ignore[arg-type]
                     else:
                         results.append(
                             Translation_Result(
@@ -398,22 +391,24 @@ class GeminiTranslator:
                             )
                         )
 
-                # Retry empty items individually
+                # Retry item rỗng bằng Google Translate
                 if empty_indices:
                     logger.warning(
-                        "gemini batch: %d/%d items were empty, retrying individually",
+                        "Batch: %d/%d items rỗng, fallback Google Translate",
                         len(empty_indices),
                         len(texts),
                     )
                     for idx in empty_indices:
-                        results[idx] = self.translate(texts[idx])
+                        results[idx] = self._translate_google_fallback(
+                            texts[idx], texts[idx]
+                        )
 
                 return results
 
             except Exception as exc:  # noqa: BLE001
                 last_error = f"{type(exc).__name__}: {exc}"
                 logger.warning(
-                    "gemini batch attempt %d/%d failed for batch of %d texts: %s",
+                    "Batch attempt %d/%d thất bại (%d texts): %s",
                     attempt + 1,
                     attempts,
                     len(texts),
@@ -422,28 +417,28 @@ class GeminiTranslator:
                 if attempt < self._max_retries and attempt < len(self._backoff):
                     time.sleep(self._backoff[attempt])
 
-        # All retries exhausted — fall back to individual translation
+        # Tất cả retry thất bại → fallback Google Translate từng câu
         logger.warning(
-            "gemini batch: all %d attempts failed (last error: %s) for batch "
-            "of %d texts, falling back to individual translation",
+            "Batch thất bại sau %d lần (%s), fallback Google Translate cho %d texts",
             attempts,
             last_error,
             len(texts),
         )
-        return [self.translate(t) for t in texts]
+        return self._fallback_individual(texts)
+
+    def _fallback_individual(self, texts: list[str]) -> list[Translation_Result]:
+        """Fallback: dịch từng câu bằng Google Translate."""
+        results: list[Translation_Result] = []
+        for text in texts:
+            results.append(self._translate_google_fallback(text, text))
+        return results
 
     def _parse_batch_response(
         self, response: str, expected_count: int
     ) -> list[str] | None:
-        """Parse a numbered-list batch response into individual translations.
+        """Parse response dạng danh sách đánh số.
 
-        Splits the response on line boundaries, skips empty lines, strips
-        the numeric prefix (pattern ``^\\d+\\.\\s+``), strips surrounding
-        whitespace and quotes from each translation.
-
-        Returns ``None`` if the number of parsed translations does not equal
-        *expected_count*, signaling that the caller should fall back to
-        individual translation.
+        Trả về None nếu số dòng không khớp expected_count.
         """
         _numbered_prefix_re = re.compile(r"^\d+\.\s+")
 
@@ -451,18 +446,14 @@ class GeminiTranslator:
         translations: list[str] = []
 
         for line in lines:
-            # Skip empty lines (after stripping whitespace)
             stripped_line = line.strip()
             if not stripped_line:
                 continue
 
-            # Strip the numeric prefix if present (e.g., "1. ", "12. ")
             text = _numbered_prefix_re.sub("", stripped_line)
-
-            # Strip leading/trailing whitespace
             text = text.strip()
 
-            # Strip surrounding quotes (single or double)
+            # Bỏ dấu nháy bao quanh
             if (
                 len(text) >= 2
                 and text[0] in ('"', "'")
