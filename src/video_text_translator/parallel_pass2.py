@@ -180,22 +180,27 @@ class ParallelPass2:
                 ok, frame = cap.read()
                 if not ok or frame is None:
                     break
-                read_q.put((frame_index, frame))
+                # Use timeout to avoid blocking forever if workers are stuck.
+                while True:
+                    if self._error is not None:
+                        break
+                    try:
+                        read_q.put((frame_index, frame), timeout=2)
+                        break
+                    except queue.Full:
+                        continue
                 frame_index += 1
             cap.release()
         except Exception as exc:
             self._set_error(exc)
         finally:
             # Signal all workers that reading is done.
-            # Put one sentinel per worker.
-            n_workers = sum(
-                1 for t in threading.enumerate() if t.name.startswith("pass2-worker")
-            )
-            for _ in range(max(n_workers, 8)):
+            n_workers = _resolve_workers(self._config.performance)
+            for _ in range(n_workers):
                 try:
-                    read_q.put(_SENTINEL, timeout=1)
+                    read_q.put(_SENTINEL, timeout=2)
                 except queue.Full:
-                    break
+                    pass
 
     def _worker_loop(
         self, read_q: queue.Queue, write_q: queue.Queue
@@ -205,12 +210,25 @@ class ParallelPass2:
             while True:
                 if self._error is not None:
                     break
-                item = read_q.get()
+                try:
+                    item = read_q.get(timeout=2)
+                except queue.Empty:
+                    if self._error is not None:
+                        break
+                    continue
                 if item is _SENTINEL:
                     break
                 frame_index, frame = item
                 processed = self._process_frame(frame_index, frame)
-                write_q.put((frame_index, processed))
+                # Use timeout to avoid blocking forever if writer is stuck.
+                while True:
+                    if self._error is not None:
+                        break
+                    try:
+                        write_q.put((frame_index, processed), timeout=2)
+                        break
+                    except queue.Full:
+                        continue
         except Exception as exc:
             self._set_error(exc)
         finally:
@@ -240,7 +258,13 @@ class ParallelPass2:
             while sentinels_received < n_workers:
                 if self._error is not None:
                     break
-                item = write_q.get()
+                try:
+                    item = write_q.get(timeout=5)
+                except queue.Empty:
+                    # Check if all workers are done (error or finished).
+                    if self._error is not None:
+                        break
+                    continue
                 if item is _SENTINEL:
                     sentinels_received += 1
                     continue
@@ -254,7 +278,7 @@ class ParallelPass2:
                         self._progress.update(1)
                     next_frame += 1
 
-            # Flush any remaining buffered frames (shouldn't happen normally).
+            # Flush any remaining buffered frames.
             while next_frame in buffer:
                 encoder.write(buffer.pop(next_frame))
                 if self._progress:

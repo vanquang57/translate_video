@@ -34,17 +34,47 @@ def _ffmpeg_path() -> str:
 
 
 def _encoder_available(encoder_name: str) -> bool:
-    """Check if a specific encoder is available in the installed ffmpeg."""
+    """Check if a specific encoder actually works (not just listed).
+
+    Simply checking ``ffmpeg -encoders`` is insufficient because ffmpeg
+    may list hardware encoders (e.g. h264_nvenc) even when the required
+    GPU hardware is not present. We must actually attempt a tiny encode
+    to confirm the encoder initializes successfully.
+    """
     try:
+        # First quick check: is it even listed?
         proc = subprocess.run(
             ["ffmpeg", "-hide_banner", "-encoders"],
             capture_output=True,
             text=True,
             timeout=10,
         )
-        return encoder_name in proc.stdout
+        if encoder_name not in proc.stdout:
+            return False
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
+
+    # For hardware encoders, actually test encoding a single frame.
+    if encoder_name in ("h264_nvenc", "h264_qsv", "h264_amf"):
+        try:
+            proc = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    "-f", "lavfi", "-i", "color=black:s=64x64:d=0.04:r=25",
+                    "-c:v", encoder_name,
+                    "-frames:v", "1",
+                    "-f", "null", "-",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            return proc.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+
+    # Software encoders (libx264) — listing is sufficient.
+    return True
 
 
 def detect_best_encoder(preferred: Encoder_Mode = "auto") -> tuple[str, str]:
