@@ -310,7 +310,7 @@ class Llm_Config:
     max_chars_target: int = 0  # 0 = không giới hạn; khác 0 = yêu cầu dịch ngắn hơn N ký tự
     rpm: int = 30  # giới hạn request/phút
     timeout_seconds: float = 30.0
-    batch_size: int = 10  # [1, 20] — số text gộp trong 1 lần gọi API
+    batch_size: int = 10  # [1, 50] — số text gộp trong 1 lần gọi API
 
     def __post_init__(self) -> None:
         if not self.model:
@@ -331,9 +331,9 @@ class Llm_Config:
                 f"translator.llm.timeout_seconds must be in (0, 120] "
                 f"(got {self.timeout_seconds})"
             )
-        if not (1 <= self.batch_size <= 20):
+        if not (1 <= self.batch_size <= 50):
             raise ValueError(
-                f"translator.llm.batch_size must be in [1, 20] "
+                f"translator.llm.batch_size must be in [1, 50] "
                 f"(got {self.batch_size})"
             )
 

@@ -83,8 +83,8 @@ translator:
     api_key_env: LLM_API_KEY
     max_chars_target: 0    # 0 = không giới hạn độ dài bản dịch; khác 0 = yêu cầu dịch ngắn hơn N ký tự
     rpm: 15                # giới hạn request/phút (tùy proxy, 9Router thường không giới hạn)
-    timeout_seconds: 30.0  # timeout riêng cho LLM (giây) — LLM thường chậm hơn Google Translate
-    batch_size: 20         # [1, 20] — số lượng text gộp trong 1 lần gọi API (tiết kiệm request)
+    timeout_seconds: 60.0  # timeout riêng cho LLM (giây) — LLM thường chậm hơn Google Translate
+    batch_size: 50         # [1, 50] — số lượng text gộp trong 1 lần gọi API (tiết kiệm request)
 
 # ============================================================================
 # Hiển thị text tiếng Việt (Renderer)
