@@ -8,7 +8,6 @@ Tự động dịch text cứng (hard-coded subtitle) trong video từ tiếng T
 - **Python**: 3.12 (PaddleOCR hiện chưa hỗ trợ 3.13+)
 - **FFmpeg**: bản binary, có trên `PATH`
 - **GPU** (tùy chọn): NVIDIA với CUDA 11.8/12.x — không bắt buộc, mọi thứ chạy được CPU
-- **RAM**: 16 GB (đủ cho video 1080p ≤ 5 phút)
 
 ## Cài đặt
 
@@ -52,7 +51,7 @@ pip install -r requirements.txt
 > Tool tự động bật oneDNN (MKL-DNN) khi chạy trên CPU, tăng tốc OCR inference 2-4x trên Intel.
 > Không cần cấu hình gì thêm.
 
-> **Dùng GPU:** uninstall `paddlepaddle` rồi cài bản GPU phù hợp với CUDA của bạn (xem <https://www.paddlepaddle.org.cn/en/install/quick>).
+> **Dùng GPU nếu máy có card màn hình:** uninstall `paddlepaddle` rồi cài bản GPU phù hợp với CUDA của bạn (xem <https://www.paddlepaddle.org.cn/en/install/quick>).
 >
 > ```cmd
 > pip uninstall paddlepaddle
@@ -88,27 +87,16 @@ Double-click `run_gui.bat` hoặc:
 ```cmd
 .venv\Scripts\python gui.py
 ```
-
-GUI cho phép:
-- Chọn file video bằng nút Browse
-- Xem thanh tiến độ realtime
-- Xem log chi tiết
-- File output tự lưu cùng thư mục input, tên dạng `video_translated.mp4`
-- Nếu file đã tồn tại, tự thêm số: `video_translated(1).mp4`, `video_translated(2).mp4`, ...
-
 ### Các mode
 
-CPU mode (mặc định):
+GPU mode (mặc định):
 
+Cấu hình ở configs/default.yaml
 ```cmd
-python main.py -i sample.mp4 -o out.mp4 --compute-mode cpu
+compute_mode: cpu        # chế độ tính toán: cpu | gpu
 ```
-
-GPU mode (đã cài `paddlepaddle-gpu`):
-
-```cmd
-python main.py -i sample.mp4 -o out.mp4 --compute-mode gpu
-```
+CPU mode (mặc định)
+GPU mode (đã cài paddlepaddle-gpu)
 
 ### Dùng LLM API cho dịch chất lượng cao (9Router / OpenRouter)
 
