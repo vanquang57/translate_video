@@ -55,7 +55,7 @@ pip install -r requirements.txt
 >
 > ```cmd
 > pip uninstall paddlepaddle
-> pip install paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
+> pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
 > ```
 
 ### 4. Verify từng module (tùy chọn)

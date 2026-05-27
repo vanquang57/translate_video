@@ -1,8 +1,8 @@
 # Core OCR (PaddleOCR 3.x with PaddlePaddle 3.x)
-# Default: CPU build of PaddlePaddle.
-# To use GPU (NVIDIA CUDA), uninstall paddlepaddle and install the GPU build matching your CUDA:
+# Default: CPU build of PaddlePaddle (3.2.1 ổn định trên Windows + Intel oneDNN).
+# To use GPU (NVIDIA CUDA), uninstall paddlepaddle and install the GPU build:
 #   pip uninstall paddlepaddle
-#   pip install paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
+#   pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
 paddlepaddle==3.2.1
 paddleocr==3.5.0
 
