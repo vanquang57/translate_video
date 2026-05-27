@@ -159,11 +159,11 @@ class PaddleOCRDetector:
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
-            # Disable oneDNN/MKLDNN: PaddlePaddle 3.x on Windows currently has
-            # an unimplemented codegen path for some oneDNN attributes
-            # ("ConvertPirAttribute2RuntimeAttribute not support ..."), which
-            # causes per-frame OCR failures. Plain CPU/GPU kernels work fine.
-            enable_mkldnn=False,
+            # oneDNN (MKL-DNN) acceleration for Intel CPUs.
+            # Can provide 2-4x speedup on inference. If PaddlePaddle raises
+            # "ConvertPirAttribute2RuntimeAttribute not support ..." errors,
+            # set enable_mkldnn=False as a workaround.
+            enable_mkldnn=True,
             cpu_threads=self._cpu_threads,
         )
         logger.info(

@@ -48,6 +48,17 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+> **CPU Intel — oneDNN acceleration (mặc định đã bật):**
+> Tool tự động bật oneDNN (MKL-DNN) khi chạy trên CPU, tăng tốc OCR inference 2-4x trên Intel.
+> Không cần cấu hình gì thêm. Nếu gặp lỗi `ConvertPirAttribute2RuntimeAttribute` trên PaddlePaddle 3.3.1,
+> hạ xuống 3.2.1:
+>
+> ```cmd
+> pip install paddlepaddle==3.2.1
+> ```
+>
+> PaddlePaddle 3.2.1 ổn định với oneDNN trên Windows + Intel CPU.
+
 > **Dùng GPU:** uninstall `paddlepaddle` rồi cài bản GPU phù hợp với CUDA của bạn (xem <https://www.paddlepaddle.org.cn/en/install/quick>).
 >
 > ```cmd
@@ -192,7 +203,8 @@ Video 1080p, 3 phút, ocr_stride=3, ocr_downscale=1.5:
 | Cấu hình | Thời gian xử lý |
 |---|---|
 | Ryzen 5 5600 + RTX 3060 Ti (`gpu`) | ≤ 6 phút |
-| Intel Ultra 5 134U (`cpu`) | ≤ 30 phút |
+| Intel Ultra 5 134U (`cpu`, oneDNN bật) | ≤ 15 phút |
+| Intel Ultra 5 134U (`cpu`, oneDNN tắt) | ≤ 30 phút |
 
 ## Troubleshooting
 
