@@ -94,9 +94,10 @@ GPU mode (mặc định):
 Cấu hình ở configs/default.yaml
 ```cmd
 compute_mode: cpu        # chế độ tính toán: cpu | gpu
+                         # CPU mode (mặc định)
+                         # GPU mode (đã cài paddlepaddle-gpu)
 ```
-CPU mode (mặc định)
-GPU mode (đã cài paddlepaddle-gpu)
+
 
 ### Dùng LLM API cho dịch chất lượng cao (9Router / OpenRouter)
 
