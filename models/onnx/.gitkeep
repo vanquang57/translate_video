@@ -1,0 +1,3 @@
+# This directory holds ONNX models converted from PP-OCRv5.
+# Run: python scripts/convert_models.py
+# Files: PP-OCRv5_mobile_det.onnx, PP-OCRv5_mobile_rec.onnx, ppocr_keys_v1.txt

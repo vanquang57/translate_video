@@ -298,6 +298,9 @@ def build_config(merged: dict[str, Any]) -> Config:
             batch_size=int(det_d.get("batch_size", 4)),
             model_variant=str(det_d.get("model_variant", "mobile")).lower(),  # type: ignore[arg-type]
             cpu_threads=int(det_d.get("cpu_threads", 0)),
+            backend=str(det_d.get("backend", "paddle")).lower(),  # type: ignore[arg-type]
+            onnx_device=str(det_d.get("onnx_device", "cpu")).lower(),  # type: ignore[arg-type]
+            onnx_model_dir=str(det_d.get("onnx_model_dir", "models/onnx")),
         )
 
         trk_d = merged.get("tracker", {}) or {}

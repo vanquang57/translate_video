@@ -209,12 +209,19 @@ class Style_Preset:
 Compute_Mode = Literal["cpu", "gpu"]
 
 
+Detector_Backend = Literal["paddle", "onnx"]
+Onnx_Device = Literal["cpu", "npu", "auto"]
+
+
 @dataclass(frozen=True, slots=True)
 class Detector_Config:
     confidence_threshold: float = 0.5
     batch_size: int = 4
     model_variant: Literal["mobile", "server"] = "mobile"
     cpu_threads: int = 0  # 0 = auto (all logical cores)
+    backend: Detector_Backend = "paddle"  # paddle | onnx
+    onnx_device: Onnx_Device = "cpu"  # cpu | npu | auto (only when backend=onnx)
+    onnx_model_dir: str = "models/onnx"  # directory containing .onnx model files
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.confidence_threshold <= 1.0):
@@ -234,6 +241,16 @@ class Detector_Config:
         if not (0 <= self.cpu_threads <= 64):
             raise ValueError(
                 f"detector.cpu_threads must be in [0, 64] (got {self.cpu_threads})"
+            )
+        if self.backend not in ("paddle", "onnx"):
+            raise ValueError(
+                f'detector.backend must be "paddle" or "onnx" '
+                f'(got "{self.backend}")'
+            )
+        if self.onnx_device not in ("cpu", "npu", "auto"):
+            raise ValueError(
+                f'detector.onnx_device must be "cpu", "npu", or "auto" '
+                f'(got "{self.onnx_device}")'
             )
 
 

@@ -66,7 +66,34 @@ pip install -r requirements.txt
 > pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
 > ```
 
-### 4. Verify từng module (tùy chọn)
+### 4. (Tùy chọn) Cài ONNX Runtime + OpenVINO EP
+
+Nếu muốn tốc độ OCR nhanh hơn 30-50% trên Intel CPU (hoặc dùng NPU trên Core Ultra):
+
+```cmd
+pip install onnxruntime-openvino paddle2onnx
+python scripts\convert_models.py
+```
+
+Sau đó đổi config:
+
+```yaml
+detector:
+  backend: onnx
+  onnx_device: cpu    # cpu | npu | auto
+```
+
+Các chế độ detector:
+
+| Config | Runtime | Use case |
+|---|---|---|
+| `backend: paddle` + `compute_mode: cpu` | PaddlePaddle + oneDNN | Mặc định, ổn định |
+| `backend: paddle` + `compute_mode: gpu` | PaddlePaddle GPU | Có NVIDIA GPU |
+| `backend: onnx` + `onnx_device: cpu` | ONNX Runtime + OpenVINO EP | Intel CPU, nhanh nhất |
+| `backend: onnx` + `onnx_device: npu` | ONNX Runtime + OpenVINO EP | Core Ultra có NPU |
+| `backend: onnx` + `onnx_device: auto` | ONNX Runtime + OpenVINO EP | Tự chọn thiết bị tốt nhất |
+
+### 5. Verify từng module (tùy chọn)
 
 ```cmd
 python scripts\verify_foundation.py

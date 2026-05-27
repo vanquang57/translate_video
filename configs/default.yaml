@@ -11,6 +11,13 @@ detector:
   batch_size: 4               # [1, 32]
   model_variant: mobile       # mobile (fast, default) | server (accurate, ~5-10x slower on CPU)
   cpu_threads: 0              # 0 = auto (use all logical cores)
+  backend: onnx             # paddle | onnx
+  # --- ONNX Runtime + OpenVINO EP (chỉ dùng khi backend=onnx) ---
+  # Lưu ý: trên Windows + PaddlePaddle 3.x, paddle2onnx bị lỗi DLL.
+  # Dùng: python scripts/convert_models.py --force-download (chỉ có server variant)
+  # Hoặc convert trên Linux rồi copy file .onnx sang.
+  onnx_device: auto            # cpu | npu | auto
+  onnx_model_dir: models/onnx # thư mục chứa file .onnx
 
 tracker:
   iou_threshold: 0.5                  # [0.0, 1.0]
@@ -61,7 +68,7 @@ translator:
 renderer:
   font_path: fonts/NotoSans-Regular.ttf
   font_size_max: 64        # [8, 512]
-  font_size_min: 20        # [6, font_size_max]
+  font_size_min: 30        # [6, font_size_max]
   text_rgb: [255, 255, 0]
 
   # Viền text (stroke) - bật/tắt + màu + độ dày
@@ -90,7 +97,7 @@ renderer:
     condensed_font_path: fonts/NotoSans-Condensed.ttf
 
 performance:
-  ocr_stride: 10                        # [1, 10]
+  ocr_stride: 1                        # [1, 10]
   ocr_downscale: 1.5                   # [1.0, 4.0]
   io_buffer_frames: 8
   max_duration_seconds: 7200           # 2 hours

@@ -49,7 +49,6 @@ _load_dotenv(_PROJECT_ROOT / ".env")
 sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 from video_text_translator.config import build_argparser, load_config  # noqa: E402
-from video_text_translator.detector import PaddleOCRDetector  # noqa: E402
 from video_text_translator.errors import InvalidConfigError  # noqa: E402
 from video_text_translator.inpainter import OpenCVInpainter  # noqa: E402
 from video_text_translator.logging_config import setup_logging  # noqa: E402
@@ -61,6 +60,39 @@ from video_text_translator.translator import GoogleTranslator  # noqa: E402
 from video_text_translator.translator_llm import LlmTranslator  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+
+def _build_detector(config):
+    """Factory: create the appropriate detector based on config."""
+    if config.detector.backend == "onnx":
+        from video_text_translator.detector_onnx import OnnxDetector  # noqa: E402
+
+        logger.info(
+            "detector backend: ONNX Runtime + OpenVINO EP (device=%s)",
+            config.detector.onnx_device,
+        )
+        return OnnxDetector(
+            model_dir=config.detector.onnx_model_dir,
+            model_variant=config.detector.model_variant,
+            device=config.detector.onnx_device,
+            confidence_threshold=config.detector.confidence_threshold,
+            downscale=config.performance.ocr_downscale,
+            cpu_threads=config.detector.cpu_threads,
+        )
+    else:
+        from video_text_translator.detector import PaddleOCRDetector  # noqa: E402
+
+        logger.info(
+            "detector backend: PaddlePaddle (compute_mode=%s)",
+            config.compute_mode,
+        )
+        return PaddleOCRDetector(
+            compute_mode=config.compute_mode,
+            confidence_threshold=config.detector.confidence_threshold,
+            downscale=config.performance.ocr_downscale,
+            model_variant=config.detector.model_variant,
+            cpu_threads=config.detector.cpu_threads,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,13 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
-    detector = PaddleOCRDetector(
-        compute_mode=config.compute_mode,
-        confidence_threshold=config.detector.confidence_threshold,
-        downscale=config.performance.ocr_downscale,
-        model_variant=config.detector.model_variant,
-        cpu_threads=config.detector.cpu_threads,
-    )
+    detector = _build_detector(config)
     tracker = IoUContentTracker(
         frame_width=width,
         frame_height=height,

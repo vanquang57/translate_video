@@ -28,3 +28,12 @@ tqdm==4.67.3
 # Dev / testing (optional, can be installed separately)
 pytest==8.4.2
 hypothesis==6.152.9
+
+# ONNX Runtime + OpenVINO EP (optional, for backend=onnx)
+# Provides 30-50% faster OCR inference on Intel CPUs vs PaddlePaddle + oneDNN.
+# Install: pip install onnxruntime-openvino
+# Then convert models: python scripts/convert_models.py
+# onnxruntime-openvino==1.21.0
+
+# Model conversion (optional, only needed once to convert models)
+# paddle2onnx==1.3.1
