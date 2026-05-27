@@ -50,20 +50,13 @@ pip install -r requirements.txt
 
 > **CPU Intel — oneDNN acceleration (mặc định đã bật):**
 > Tool tự động bật oneDNN (MKL-DNN) khi chạy trên CPU, tăng tốc OCR inference 2-4x trên Intel.
-> Không cần cấu hình gì thêm. Nếu gặp lỗi `ConvertPirAttribute2RuntimeAttribute` trên PaddlePaddle 3.3.1,
-> hạ xuống 3.2.1:
->
-> ```cmd
-> pip install paddlepaddle==3.2.1
-> ```
->
-> PaddlePaddle 3.2.1 ổn định với oneDNN trên Windows + Intel CPU.
+> Không cần cấu hình gì thêm.
 
 > **Dùng GPU:** uninstall `paddlepaddle` rồi cài bản GPU phù hợp với CUDA của bạn (xem <https://www.paddlepaddle.org.cn/en/install/quick>).
 >
 > ```cmd
 > pip uninstall paddlepaddle
-> pip install paddlepaddle-gpu==3.3.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
+> pip install paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
 > ```
 
 ### 4. Verify từng module (tùy chọn)
@@ -73,11 +66,37 @@ python scripts\verify_foundation.py
 python scripts\verify_config.py
 ```
 
-## Cách dùng cơ bản
+## Cách dùng
+
+### Chạy bằng lệnh (CLI)
 
 ```cmd
+.venv\Scripts\activate
 python main.py -i sample.mp4 -o out.mp4
 ```
+
+Hoặc không cần activate venv:
+
+```cmd
+run.bat -i sample.mp4 -o out.mp4
+```
+
+### Chạy bằng GUI
+
+Double-click `run_gui.bat` hoặc:
+
+```cmd
+.venv\Scripts\python gui.py
+```
+
+GUI cho phép:
+- Chọn file video bằng nút Browse
+- Xem thanh tiến độ realtime
+- Xem log chi tiết
+- File output tự lưu cùng thư mục input, tên dạng `video_translated.mp4`
+- Nếu file đã tồn tại, tự thêm số: `video_translated(1).mp4`, `video_translated(2).mp4`, ...
+
+### Các mode
 
 CPU mode (mặc định):
 
@@ -226,6 +245,9 @@ fonts/                       # font Việt được bundle sẵn
 scripts/                     # script verify từng module
 tests/                       # unit + property tests
 main.py                      # entry point CLI
+gui.py                       # entry point GUI (tkinter)
+run.bat                      # shortcut chạy CLI không cần activate venv
+run_gui.bat                  # shortcut mở GUI
 requirements.txt
 ```
 

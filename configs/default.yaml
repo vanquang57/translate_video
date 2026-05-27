@@ -1,36 +1,64 @@
-# Default configuration for Video Text Translator
-# CLI arguments override values in this file.
-# See README.md for parameter explanations.
+# ============================================================================
+# Cấu hình mặc định cho Video Text Translator
+# Tham số dòng lệnh (CLI) sẽ ghi đè giá trị trong file này.
+# ============================================================================
 
-input_path: ""           # required (set via --input)
-output_path: ""          # required (set via --output)
-compute_mode: cpu        # cpu | gpu
+input_path: ""           # (bắt buộc) đường dẫn video đầu vào — đặt qua --input
+output_path: ""          # (bắt buộc) đường dẫn video đầu ra — đặt qua --output
+compute_mode: cpu        # chế độ tính toán: cpu | gpu
 
+# ============================================================================
+# Nhận diện text (OCR)
+# ============================================================================
 detector:
-  confidence_threshold: 0.5   # [0.0, 1.0]
-  batch_size: 4               # [1, 32]
-  model_variant: mobile       # mobile (fast, default) | server (accurate, ~5-10x slower on CPU)
-  cpu_threads: 0              # 0 = auto (use all logical cores)
+  confidence_threshold: 0.5   # [0.0, 1.0] — ngưỡng tin cậy, thấp = nhận nhiều text hơn nhưng dễ sai
+  batch_size: 4               # [1, 32] — số frame xử lý cùng lúc (tăng = nhanh hơn, tốn RAM hơn)
+  model_variant: mobile       # mobile = nhanh (mặc định) | server = chính xác hơn (~5-10x chậm hơn trên CPU)
+  cpu_threads: 0              # 0 = tự động dùng tất cả cores | chỉ định số cụ thể nếu muốn giới hạn
 
+# ============================================================================
+# Theo dõi text (Tracker) — ghép các vùng text qua nhiều frame thành segment
+# ============================================================================
 tracker:
-  iou_threshold: 0.5                  # [0.0, 1.0]
-  content_similarity_threshold: 0.7   # [0.0, 1.0]
-  center_distance_ratio: 0.10         # (0.0, 1.0]  fraction of frame diagonal
-  n_inactive: 3                       # [1, 30]
-  max_active_segments: 100            # [1, 1000]
-  smooth_lock_threshold: 3            # [0, 20] px — jitter dưới ngưỡng này bị khóa (không di chuyển)
-  smooth_ema_alpha: 0.3               # (0.0, 1.0] — hệ số EMA, nhỏ = mượt hơn, lớn = phản ứng nhanh hơn
+  iou_threshold: 0.5                  # [0.0, 1.0] — ngưỡng IoU để coi 2 box là cùng 1 text
+  content_similarity_threshold: 0.7   # [0.0, 1.0] — ngưỡng tương đồng nội dung text
+  center_distance_ratio: 0.10         # (0.0, 1.0] — khoảng cách tâm tối đa (tỷ lệ đường chéo frame)
+  n_inactive: 3                       # [1, 30] — số frame không thấy text trước khi đóng segment
+  max_active_segments: 100            # [1, 1000] — số segment tối đa theo dõi cùng lúc
 
+  # --- Ổn định vị trí phụ đề (chống giật) ---
+  #
+  # Cách hoạt động:
+  #   1. Nếu vị trí text thay đổi < smooth_lock_threshold px → KHÓA (giữ nguyên, không nhúc nhích)
+  #   2. Nếu vượt ngưỡng (text di chuyển thật) → dùng EMA để chuyển mượt thay vì nhảy đột ngột
+  #
+  # Mẹo chỉnh:
+  #   - Vẫn giật nhẹ?           → tăng smooth_lock_threshold lên 4-5
+  #   - Text di chuyển bị lag?  → tăng smooth_ema_alpha lên 0.4-0.5
+  #   - Muốn text tĩnh 100%?   → giảm smooth_ema_alpha xuống 0.2
+  #
+  smooth_lock_threshold: 3            # [0, 20] px — ngưỡng khóa vị trí; dưới mức này coi là noise, không di chuyển
+  smooth_ema_alpha: 0.4               # (0.0, 1.0] — tốc độ bám theo chuyển động thật; nhỏ = mượt, lớn = nhanh
+ # Nếu text giật nhẹ: tăng smooth_lock_threshold lên 4-5
+ # Nếu text di chuyển bị lag: tăng smooth_ema_alpha lên 0.4-0.5
+ # Nếu muốn text tĩnh hoàn toàn không nhúc nhích: giảm smooth_ema_alpha xuống 0.2
+
+# ============================================================================
+# Xóa text gốc (Inpainting) — tẩy chữ Trung trước khi vẽ chữ Việt
+# ============================================================================
 inpainter:
-  algorithm: telea         # telea | ns
-  radius: 3                # [1, 20]
-  padding: 4               # [0, 20]
+  algorithm: telea         # thuật toán: telea (nhanh, mặc định) | ns (Navier-Stokes, mượt hơn nhưng chậm)
+  radius: 3                # [1, 20] — bán kính vùng lấp (lớn = lấp rộng hơn, dễ bị mờ)
+  padding: 4               # [0, 20] — mở rộng vùng xóa thêm N px mỗi cạnh (tránh sót viền chữ)
 
+# ============================================================================
+# Dịch thuật
+# ============================================================================
 translator:
-  backend: llm             # google | llm  (llm dùng OpenAI-compatible API qua 9Router/OpenRouter)
-  timeout_seconds: 10.0    # (0, 60]
-  max_chars: 5000          # [1, 10000]
-  max_retries: 3           # [0, 10]
+  backend: llm             # google = Google Translate (miễn phí) | llm = dùng LLM API (chất lượng cao hơn)
+  timeout_seconds: 10.0    # (0, 60] — timeout cho mỗi request dịch (giây)
+  max_chars: 5000          # [1, 10000] — số ký tự tối đa gửi trong 1 lần dịch
+  max_retries: 3           # [0, 10] — số lần thử lại khi dịch thất bại
   llm:
     enabled: true
     # --- Cấu hình LLM API (OpenAI-compatible endpoint) ---
@@ -53,61 +81,67 @@ translator:
     base_url: "http://localhost:20128/v1"
     model: vip
     api_key_env: LLM_API_KEY
-    max_chars_target: 0    # 0 = không giới hạn độ dài bản dịch
+    max_chars_target: 0    # 0 = không giới hạn độ dài bản dịch; khác 0 = yêu cầu dịch ngắn hơn N ký tự
     rpm: 15                # giới hạn request/phút (tùy proxy, 9Router thường không giới hạn)
-    timeout_seconds: 30.0
+    timeout_seconds: 30.0  # timeout riêng cho LLM (giây) — LLM thường chậm hơn Google Translate
     batch_size: 20         # [1, 20] — số lượng text gộp trong 1 lần gọi API (tiết kiệm request)
 
+# ============================================================================
+# Hiển thị text tiếng Việt (Renderer)
+# ============================================================================
 renderer:
-  font_path: fonts/NotoSans-Regular.ttf
-  font_size_max: 64        # [8, 512]
-  font_size_min: 20        # [6, font_size_max]
-  text_rgb: [255, 255, 0]
+  font_path: fonts/NotoSans-Regular.ttf   # đường dẫn font chính
+  font_size_max: 64        # [8, 512] — cỡ chữ tối đa (auto-fit sẽ chọn lớn nhất vừa box)
+  font_size_min: 20        # [6, font_size_max] — cỡ chữ tối thiểu (nhỏ hơn = không render)
+  text_rgb: [255, 255, 0]  # màu chữ [R, G, B] — vàng mặc định
 
-  # Viền text (stroke) - bật/tắt + màu + độ dày
-  stroke_enabled: true
-  stroke_rgb: [0, 0, 0]
-  stroke_width: 2          # [0, 20]
+  # --- Viền chữ (stroke) ---
+  stroke_enabled: true     # bật/tắt viền
+  stroke_rgb: [0, 0, 0]   # màu viền [R, G, B] — đen mặc định
+  stroke_width: 2          # [0, 20] — độ dày viền (px)
 
-  # Background phía sau text - bật/tắt + màu + độ mờ
-  background_enabled: false
-  background_rgb: [255, 255, 0]
-  background_alpha: 128    # [0, 255]; 255 = đặc, 0 = trong suốt
+  # --- Nền phía sau chữ (background) ---
+  background_enabled: false      # bật/tắt nền
+  background_rgb: [255, 255, 0]  # màu nền [R, G, B]
+  background_alpha: 128          # [0, 255] — độ trong suốt; 255 = đặc hoàn toàn, 0 = trong suốt
 
-  # Đổ bóng - bật/tắt + màu + độ lệch
-  shadow_enabled: false
-  shadow_rgb: [0, 0, 0]
-  shadow_offset: [2, 2]    # each in [-50, 50]
+  # --- Đổ bóng chữ (shadow) ---
+  shadow_enabled: false    # bật/tắt bóng
+  shadow_rgb: [0, 0, 0]   # màu bóng [R, G, B]
+  shadow_offset: [2, 2]   # [dx, dy] mỗi giá trị trong [-50, 50] — độ lệch bóng so với chữ
 
-  # Cascade fallback khi text Việt dài hơn box gốc.
-  # Thứ tự áp dụng: 1) expand bbox -> 2) word wrap -> 3) condensed font.
+  # --- Xử lý tràn (khi bản dịch tiếng Việt dài hơn box gốc) ---
+  # Thứ tự áp dụng: 1) mở rộng box → 2) xuống dòng → 3) font hẹp
   overflow:
-    expand_bbox_enabled: true
-    expand_bbox_max: 1.2             # [1.0, 4.0] - mở rộng box tối đa N lần
-    word_wrap_enabled: true
-    word_wrap_max_lines: 3           # [1, 10]
-    condensed_enabled: true
-    condensed_font_path: fonts/NotoSans-Condensed.ttf
+    expand_bbox_enabled: true              # cho phép mở rộng box
+    expand_bbox_max: 1.2                   # [1.0, 4.0] — mở rộng tối đa N lần kích thước gốc
+    word_wrap_enabled: true                # cho phép xuống dòng
+    word_wrap_max_lines: 3                 # [1, 10] — số dòng tối đa
+    condensed_enabled: true                # cho phép dùng font hẹp (condensed)
+    condensed_font_path: fonts/NotoSans-Condensed.ttf  # đường dẫn font hẹp
 
+# ============================================================================
+# Hiệu năng
+# ============================================================================
 performance:
-  ocr_stride: 10                        # [1, 10]
-  ocr_downscale: 1.5                   # [1.0, 4.0]
-  io_buffer_frames: 8
-  max_duration_seconds: 7200           # 2 hours
-  max_file_size_bytes: 5368709120      # 5 GB
+  ocr_stride: 10                       # [1, 10] — chạy OCR mỗi N frame (10 = nhanh, 1 = chính xác nhất)
+  ocr_downscale: 1.5                   # [1.0, 4.0] — thu nhỏ frame trước khi OCR (lớn = nhanh, mất chi tiết)
+  io_buffer_frames: 8                  # số frame buffer khi đọc/ghi video
+  max_duration_seconds: 7200           # giới hạn thời lượng video (giây) — mặc định 2 giờ
+  max_file_size_bytes: 5368709120      # giới hạn dung lượng file (bytes) — mặc định 5 GB
 
-  # --- Encoder (Pass2 video output) ---
-  # auto: tự detect GPU encoder (nvenc > qsv > amf > libx264)
-  # cpu: luôn dùng libx264 (chạy mọi máy)
+  # --- Encoder (xuất video Pass2) ---
+  # auto: tự phát hiện GPU encoder (nvenc > qsv > amf > libx264)
+  # cpu: luôn dùng libx264 (chạy được mọi máy)
   # nvenc: NVIDIA GPU (GTX 600+)
   # qsv: Intel QuickSync (CPU Intel Gen 6+)
   # amf: AMD GPU
   encoder: auto
-  encoder_preset: fast                 # ultrafast | fast | medium
+  encoder_preset: fast                 # ultrafast | fast | medium — nhanh hơn = file lớn hơn
 
-  # --- Pass2 parallelism ---
-  # auto: parallel nếu >= 4 cores, sequential nếu ít hơn
-  # sequential: single-thread (an toàn, dùng ít RAM)
-  # parallel: multi-thread pipeline (nhanh hơn 2-4x)
+  # --- Chế độ xử lý Pass2 ---
+  # auto: tự chọn parallel nếu >= 4 cores, sequential nếu ít hơn
+  # sequential: đơn luồng (an toàn, dùng ít RAM)
+  # parallel: đa luồng (nhanh hơn 2-4x, tốn RAM hơn)
   pass2_mode: auto
-  parallel_workers: 0                  # 0 = auto (số cores - 2), hoặc chỉ định cụ thể [1-32]
+  parallel_workers: 0                  # 0 = tự động (số cores - 2) | chỉ định cụ thể [1-32]
