@@ -179,3 +179,4 @@ timing:
 performance:
   encoder: auto                # auto | cpu | nvenc | qsv | amf
   encoder_preset: fast         # ultrafast | fast | medium
+  parallel_workers: 0          # 0 = tự động (CPU cores - 2) | chỉ định cụ thể [1-16]

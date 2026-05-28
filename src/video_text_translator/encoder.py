@@ -104,6 +104,11 @@ def detect_best_encoder(preferred: Encoder_Mode = "auto") -> tuple[str, str]:
     # Auto-detect
     if _encoder_available("h264_nvenc"):
         return "h264_nvenc", "NVIDIA NVENC (auto-detected)"
+    else:
+        logger.info(
+            "encoder: h264_nvenc not available — check that FFmpeg was built "
+            "with --enable-nvenc and NVIDIA drivers are installed"
+        )
     if _encoder_available("h264_qsv"):
         return "h264_qsv", "Intel QuickSync (auto-detected)"
     if _encoder_available("h264_amf"):

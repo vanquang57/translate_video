@@ -207,6 +207,7 @@ class PerturbationConfig:
     # Performance
     encoder: str = "auto"
     encoder_preset: str = "fast"
+    parallel_workers: int = 0  # 0 = auto-detect based on CPU cores
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +416,8 @@ def _flatten_yaml_to_config_fields(data: dict[str, Any]) -> dict[str, Any]:
         flat["encoder"] = performance["encoder"]
     if "encoder_preset" in performance:
         flat["encoder_preset"] = performance["encoder_preset"]
+    if "parallel_workers" in performance:
+        flat["parallel_workers"] = performance["parallel_workers"]
 
     return flat
 

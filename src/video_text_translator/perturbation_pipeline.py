@@ -30,6 +30,7 @@ from .perturbation_color import ColorDriftProcessor
 from .perturbation_combo import MultiTransformCombo
 from .perturbation_config import PerturbationConfig, validate_config
 from .perturbation_overlay import OverlayProcessor
+from .perturbation_parallel import ParallelFrameProcessor
 from .perturbation_rotation import RotationDriftProcessor
 from .perturbation_scene import SceneRecompositionProcessor
 from .perturbation_spatial import SpatialTransformProcessor
@@ -221,9 +222,21 @@ class PerturbationPipeline:
                     spatial, rotation, color, overlay, fps, width, height
                 )
             else:
-                self._process_frames(
+                # Determine worker count: force single-thread when seed is
+                # set to guarantee bit-exact reproducibility.
+                workers = config.parallel_workers
+                if self.config.seed is not None:
+                    workers = 1
+
+                parallel = ParallelFrameProcessor(
+                    num_workers=workers,
+                    buffer_size=32,
+                )
+                parallel.process_frames(
                     cap, encoder, frame_map,
-                    spatial, rotation, color, overlay, fps, n_frames, output_frame_count
+                    spatial, rotation, color, overlay,
+                    fps, n_frames, output_frame_count,
+                    progress=self.progress,
                 )
         finally:
             cap.release()
@@ -294,34 +307,47 @@ class PerturbationPipeline:
 
         Transform order: Spatial → Rotation → Color → Overlay
 
-        Reads input frames as needed by the frame_map, applies transforms,
-        and writes to encoder.
+        Uses streaming approach with a small sliding buffer to avoid
+        loading all frames into memory. This keeps RAM usage constant
+        regardless of video length.
         """
         if frame_map is not None:
-            # We need random access to input frames based on frame_map.
-            # Read all frames into memory for small videos, or use seeking.
-            # For efficiency, read frames sequentially and cache.
-            frame_cache: dict[int, np.ndarray] = {}
-            max_needed = max(frame_map) if frame_map else 0
+            # Streaming approach: read frames sequentially, keep a small
+            # sliding buffer. frame_map is nearly monotonic (each entry
+            # is >= previous or at most a few frames back due to
+            # drops/duplicates), so we only need to buffer a small window.
+            #
+            # Buffer strategy: keep frames from min_needed to current read
+            # position, evict frames that are no longer referenced.
 
-            # Read frames up to max_needed
-            for idx in range(max_needed + 1):
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                # Only cache frames that are actually needed
-                if idx in set(frame_map):
-                    frame_cache[idx] = frame
+            read_pos = -1  # Last frame index read from cap
+            frame_buffer: dict[int, np.ndarray] = {}
+            frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 
-            # Write output frames according to frame_map
+            # Precompute the minimum future reference for each position
+            # to know when we can evict a frame from buffer.
+            # For efficiency, compute the last output index that needs each input frame.
+            last_use: dict[int, int] = {}
             for out_idx, in_idx in enumerate(frame_map):
-                frame = frame_cache.get(in_idx)
+                last_use[in_idx] = out_idx
+
+            for out_idx, in_idx in enumerate(frame_map):
+                # Read forward until we have the frame we need
+                while read_pos < in_idx:
+                    ret, frame = cap.read()
+                    read_pos += 1
+                    if not ret:
+                        break
+                    # Only buffer if this frame is still needed
+                    if read_pos in last_use and last_use[read_pos] >= out_idx:
+                        frame_buffer[read_pos] = frame
+
+                frame = frame_buffer.get(in_idx)
                 if frame is None:
-                    # Fallback: use a black frame if frame not available
+                    # Fallback: black frame if unavailable
                     frame = np.zeros(
-                        (int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                         int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), 3),
-                        dtype=np.uint8,
+                        (frame_height, frame_width, 3), dtype=np.uint8
                     )
 
                 # Apply transforms in order: Spatial → Rotation → Color → Overlay
@@ -337,6 +363,10 @@ class PerturbationPipeline:
 
                 encoder.write(frame)
                 self.progress.update(1)
+
+                # Evict frames no longer needed
+                if in_idx in last_use and last_use[in_idx] <= out_idx:
+                    frame_buffer.pop(in_idx, None)
         else:
             # No temporal drift: read and process frames sequentially
             for out_idx in range(n_frames):
