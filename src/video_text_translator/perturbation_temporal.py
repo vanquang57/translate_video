@@ -57,6 +57,7 @@ class TemporalDriftProcessor:
             duration=duration,
             change_interval=self.config.change_interval,
             rng=self.rng,
+            interpolation_window=self.config.transition_window,
         )
         speed_schedule = scheduler.schedule(
             self.config.speed_min, self.config.speed_max

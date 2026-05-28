@@ -68,6 +68,7 @@ class SpatialTransformProcessor:
             duration=3600.0,  # 1 hour max; segments beyond video are unused
             change_interval=config.change_interval,
             rng=rng,
+            interpolation_window=config.transition_window,
         )
 
         # Generate crop schedule: values in [0, max_crop_percent]

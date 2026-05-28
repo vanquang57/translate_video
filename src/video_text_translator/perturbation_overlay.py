@@ -61,6 +61,7 @@ class OverlayProcessor:
             duration=3600.0,  # 1 hour max
             change_interval=config.change_interval,
             rng=rng,
+            interpolation_window=config.transition_window,
         )
 
         # Opacity schedule: values in [0.0, overlay_opacity_max]

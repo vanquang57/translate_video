@@ -33,8 +33,10 @@ from .perturbation_overlay import OverlayProcessor
 from .perturbation_parallel import ParallelFrameProcessor
 from .perturbation_rotation import RotationDriftProcessor
 from .perturbation_scene import SceneRecompositionProcessor
+from .perturbation_scheduler import CorrelatedScheduler
 from .perturbation_spatial import SpatialTransformProcessor
 from .perturbation_temporal import TemporalDriftProcessor
+from .perturbation_warp import LocalizedWarpProcessor
 from .progress import ProgressReporter
 
 logger = logging.getLogger(__name__)
@@ -176,6 +178,21 @@ class PerturbationPipeline:
         if config.spatial_enabled:
             spatial = SpatialTransformProcessor(config, width, height, rng)
 
+        # Step 7a: Create correlated scheduler for shared oscillation (Wave 2)
+        correlated_sched: CorrelatedScheduler | None = None
+        if config.scheduling_mode != "random":
+            correlated_sched = CorrelatedScheduler(
+                duration=duration,
+                change_interval=config.change_interval,
+                rng=random.Random(rng.randint(0, 2**32 - 1)),
+                mode=config.scheduling_mode,
+                base_frequency=config.base_frequency,
+            )
+            logger.info(
+                "correlated scheduling: mode=%s, freq=%.3f Hz",
+                config.scheduling_mode, config.base_frequency,
+            )
+
         # Step 7b: Create rotation drift processor (Wave 1)
         rotation: RotationDriftProcessor | None = None
         if config.rotation_enabled:
@@ -196,6 +213,17 @@ class PerturbationPipeline:
         if config.gop_perturbation_enabled:
             gop_size = rng.randint(config.gop_min, config.gop_max)
             logger.info("GOP perturbation: using gop_size=%d", gop_size)
+
+        # Step 7f: Create localized warp processor (Wave 2)
+        warp: LocalizedWarpProcessor | None = None
+        if config.warp_enabled:
+            base_phase = correlated_sched.base_phase if correlated_sched else None
+            warp = LocalizedWarpProcessor(config, width, height, rng, base_phase)
+            logger.info(
+                "warp: grid=%dx%d, max_disp=%.1fpx",
+                config.warp_grid_size, config.warp_grid_size,
+                config.warp_max_displacement,
+            )
 
         # Step 8: Frame-by-frame processing
         output_frame_count = len(frame_map) if frame_map else n_frames
@@ -219,7 +247,7 @@ class PerturbationPipeline:
                 # Scene recomposition changes the reading order
                 self._process_frames_with_scenes(
                     cap, encoder, scene_frame_order, frame_map,
-                    spatial, rotation, color, overlay, fps, width, height
+                    spatial, warp, rotation, color, overlay, fps, width, height
                 )
             else:
                 # Determine worker count: force single-thread when seed is
@@ -234,7 +262,7 @@ class PerturbationPipeline:
                 )
                 parallel.process_frames(
                     cap, encoder, frame_map,
-                    spatial, rotation, color, overlay,
+                    spatial, warp, rotation, color, overlay,
                     fps, n_frames, output_frame_count,
                     progress=self.progress,
                 )
@@ -296,6 +324,7 @@ class PerturbationPipeline:
         encoder: FFmpegEncoder,
         frame_map: list[int] | None,
         spatial: SpatialTransformProcessor | None,
+        warp: LocalizedWarpProcessor | None,
         rotation: RotationDriftProcessor | None,
         color: ColorDriftProcessor | None,
         overlay: OverlayProcessor | None,
@@ -305,7 +334,7 @@ class PerturbationPipeline:
     ) -> None:
         """Process frames sequentially using frame_map and transforms.
 
-        Transform order: Spatial → Rotation → Color → Overlay
+        Transform order: Spatial → Warp → Rotation → Color → Overlay
 
         Uses streaming approach with a small sliding buffer to avoid
         loading all frames into memory. This keeps RAM usage constant
@@ -350,10 +379,12 @@ class PerturbationPipeline:
                         (frame_height, frame_width, 3), dtype=np.uint8
                     )
 
-                # Apply transforms in order: Spatial → Rotation → Color → Overlay
+                # Apply transforms in order: Spatial → Warp → Rotation → Color → Overlay
                 timestamp = out_idx / fps
                 if spatial is not None:
                     frame = spatial.transform_frame(frame, timestamp)
+                if warp is not None:
+                    frame = warp.transform_frame(frame, timestamp)
                 if rotation is not None:
                     frame = rotation.transform_frame(frame, timestamp)
                 if color is not None:
@@ -374,10 +405,12 @@ class PerturbationPipeline:
                 if not ret:
                     break
 
-                # Apply transforms in order: Spatial → Rotation → Color → Overlay
+                # Apply transforms in order: Spatial → Warp → Rotation → Color → Overlay
                 timestamp = out_idx / fps
                 if spatial is not None:
                     frame = spatial.transform_frame(frame, timestamp)
+                if warp is not None:
+                    frame = warp.transform_frame(frame, timestamp)
                 if rotation is not None:
                     frame = rotation.transform_frame(frame, timestamp)
                 if color is not None:
@@ -395,6 +428,7 @@ class PerturbationPipeline:
         scene_frame_order: list[tuple[int, int]],
         frame_map: list[int] | None,
         spatial: SpatialTransformProcessor | None,
+        warp: LocalizedWarpProcessor | None,
         rotation: RotationDriftProcessor | None,
         color: ColorDriftProcessor | None,
         overlay: OverlayProcessor | None,
@@ -405,7 +439,7 @@ class PerturbationPipeline:
         """Process frames with scene recomposition ordering.
 
         Reads frames according to the scene order, applies temporal drift
-        and all transforms (Spatial → Rotation → Color → Overlay).
+        and all transforms (Spatial → Warp → Rotation → Color → Overlay).
         """
         # Read all frames into memory for scene reordering
         all_frames: list[np.ndarray] = []
@@ -440,6 +474,8 @@ class PerturbationPipeline:
             timestamp = out_idx / fps
             if spatial is not None:
                 frame = spatial.transform_frame(frame, timestamp)
+            if warp is not None:
+                frame = warp.transform_frame(frame, timestamp)
             if rotation is not None:
                 frame = rotation.transform_frame(frame, timestamp)
             if color is not None:

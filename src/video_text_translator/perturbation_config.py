@@ -79,6 +79,12 @@ PRESETS: dict[str, dict[str, Any]] = {
         # Wave 1: GOP Perturbation
         "gop_min": 30,
         "gop_max": 90,
+        # Wave 2: Scheduling
+        "scheduling_mode": "correlated",
+        "base_frequency": 0.05,
+        # Wave 2: Warp
+        "warp_max_displacement": 2.0,
+        "warp_grid_size": 6,
     },
     "medium": {
         "speed_min": 0.99,
@@ -105,6 +111,12 @@ PRESETS: dict[str, dict[str, Any]] = {
         # Wave 1: GOP Perturbation
         "gop_min": 15,
         "gop_max": 120,
+        # Wave 2: Scheduling
+        "scheduling_mode": "correlated",
+        "base_frequency": 0.1,
+        # Wave 2: Warp
+        "warp_max_displacement": 3.0,
+        "warp_grid_size": 8,
     },
     "heavy": {
         "speed_min": 0.97,
@@ -131,6 +143,12 @@ PRESETS: dict[str, dict[str, Any]] = {
         # Wave 1: GOP Perturbation
         "gop_min": 10,
         "gop_max": 150,
+        # Wave 2: Scheduling
+        "scheduling_mode": "correlated",
+        "base_frequency": 0.15,
+        # Wave 2: Warp
+        "warp_max_displacement": 5.0,
+        "warp_grid_size": 10,
     },
 }
 
@@ -201,8 +219,18 @@ class PerturbationConfig:
     gop_min: int = 15  # [1, 300]
     gop_max: int = 120  # [1, 300]
 
+    # Scheduling (Wave 2)
+    scheduling_mode: str = "correlated"  # "random" | "sinusoidal" | "correlated"
+    base_frequency: float = 0.1  # [0.01, 1.0] Hz — base oscillation frequency
+
+    # Localized Warp (Wave 2)
+    warp_enabled: bool = True
+    warp_grid_size: int = 8  # [4, 16] control points per axis
+    warp_max_displacement: float = 3.0  # [0.0, 10.0] max pixels displacement
+
     # Timing
     change_interval: float = 10.0  # [0.5, 300.0] seconds
+    transition_window: float = 2.0  # [0.1, 10.0] seconds — duration of smooth transition between values
 
     # Performance
     encoder: str = "auto"
@@ -232,6 +260,7 @@ _VALID_RANGES: dict[str, tuple[float, float]] = {
     "ambience_volume_max_db": (-60.0, 0.0),
     "combo_intensity_factor": (0.1, 1.0),
     "change_interval": (0.5, 300.0),
+    "transition_window": (0.1, 10.0),
     # Wave 1: Color Drift
     "gamma_range": (0.0, 0.1),
     "saturation_range": (0.0, 0.1),
@@ -244,11 +273,17 @@ _VALID_RANGES: dict[str, tuple[float, float]] = {
     # Wave 1: GOP Perturbation
     "gop_min": (1, 300),
     "gop_max": (1, 300),
+    # Wave 2: Scheduling
+    "base_frequency": (0.01, 1.0),
+    # Wave 2: Warp
+    "warp_grid_size": (4, 16),
+    "warp_max_displacement": (0.0, 10.0),
 }
 
 _VALID_ENCODERS = {"auto", "cpu", "nvenc", "qsv", "amf"}
 _VALID_ENCODER_PRESETS = {"ultrafast", "fast", "medium"}
 _VALID_PRESETS = {"light", "medium", "heavy"}
+_VALID_SCHEDULING_MODES = {"random", "sinusoidal", "correlated"}
 
 
 def validate_config(config: PerturbationConfig) -> None:
@@ -276,6 +311,13 @@ def validate_config(config: PerturbationConfig) -> None:
         raise InvalidConfigError(
             f"Invalid encoder_preset '{config.encoder_preset}' "
             f"(valid: {', '.join(sorted(_VALID_ENCODER_PRESETS))})"
+        )
+
+    # Validate scheduling_mode
+    if config.scheduling_mode not in _VALID_SCHEDULING_MODES:
+        raise InvalidConfigError(
+            f"Invalid scheduling_mode '{config.scheduling_mode}' "
+            f"(valid: {', '.join(sorted(_VALID_SCHEDULING_MODES))})"
         )
 
     # Validate numeric ranges
@@ -405,10 +447,28 @@ def _flatten_yaml_to_config_fields(data: dict[str, Any]) -> dict[str, Any]:
     if "gop_max" in gop:
         flat["gop_max"] = gop["gop_max"]
 
+    # Scheduling section (Wave 2)
+    scheduling = data.get("scheduling", {}) or {}
+    if "mode" in scheduling:
+        flat["scheduling_mode"] = scheduling["mode"]
+    if "base_frequency" in scheduling:
+        flat["base_frequency"] = scheduling["base_frequency"]
+
+    # Warp section (Wave 2)
+    warp = data.get("warp", {}) or {}
+    if "enabled" in warp:
+        flat["warp_enabled"] = warp["enabled"]
+    if "grid_size" in warp:
+        flat["warp_grid_size"] = warp["grid_size"]
+    if "max_displacement" in warp:
+        flat["warp_max_displacement"] = warp["max_displacement"]
+
     # Timing section
     timing = data.get("timing", {}) or {}
     if "change_interval" in timing:
         flat["change_interval"] = timing["change_interval"]
+    if "transition_window" in timing:
+        flat["transition_window"] = timing["transition_window"]
 
     # Performance section
     performance = data.get("performance", {}) or {}
@@ -517,6 +577,13 @@ def load_perturbation_config(
     merged.setdefault("gop_perturbation_enabled", True)
     merged.setdefault("gop_min", 15)
     merged.setdefault("gop_max", 120)
+    # Wave 2 defaults
+    merged.setdefault("scheduling_mode", "correlated")
+    merged.setdefault("base_frequency", 0.1)
+    merged.setdefault("warp_enabled", True)
+    merged.setdefault("warp_grid_size", 8)
+    merged.setdefault("warp_max_displacement", 3.0)
+    merged.setdefault("transition_window", 2.0)
 
     # Step 8: Build config
     try:

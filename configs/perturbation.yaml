@@ -40,6 +40,13 @@ presets:
     gop:
       gop_min: 30              # [1, 300]
       gop_max: 90              # [1, 300]
+    scheduling:
+      mode: correlated         # random | sinusoidal | correlated
+      base_frequency: 0.05     # [0.01, 1.0] Hz
+    warp:
+      enabled: true
+      grid_size: 6             # [4, 16]
+      max_displacement: 2.0    # [0.0, 10.0] pixels
     timing:
       change_interval: 15.0    # [0.5, 300.0] seconds
 
@@ -71,6 +78,13 @@ presets:
     gop:
       gop_min: 15              # [1, 300]
       gop_max: 120             # [1, 300]
+    scheduling:
+      mode: correlated         # random | sinusoidal | correlated
+      base_frequency: 0.1      # [0.01, 1.0] Hz
+    warp:
+      enabled: true
+      grid_size: 8             # [4, 16]
+      max_displacement: 3.0    # [0.0, 10.0] pixels
     timing:
       change_interval: 10.0    # [0.5, 300.0] seconds
 
@@ -102,6 +116,13 @@ presets:
     gop:
       gop_min: 10              # [1, 300]
       gop_max: 150             # [1, 300]
+    scheduling:
+      mode: correlated         # random | sinusoidal | correlated
+      base_frequency: 0.15     # [0.01, 1.0] Hz
+    warp:
+      enabled: true
+      grid_size: 10            # [4, 16]
+      max_displacement: 5.0    # [0.0, 10.0] pixels
     timing:
       change_interval: 5.0     # [0.5, 300.0] seconds
 
@@ -171,9 +192,21 @@ gop:
   gop_min: 15                  # [1, 300] — kích thước GOP tối thiểu (frames)
   gop_max: 120                 # [1, 300] — kích thước GOP tối đa (frames)
 
+# --- Lập lịch tham số (Scheduling — Wave 2) ---
+scheduling:
+  mode: correlated             # random | sinusoidal | correlated
+  base_frequency: 0.1          # [0.01, 1.0] — tần số dao động cơ sở (Hz)
+
+# --- Biến dạng cục bộ (Localized Warp — Wave 2) ---
+warp:
+  enabled: true
+  grid_size: 8                 # [4, 16] — số điểm điều khiển mỗi trục
+  max_displacement: 3.0        # [0.0, 10.0] — dịch chuyển tối đa (pixels)
+
 # --- Thời gian thay đổi tham số ---
 timing:
-  change_interval: 10.0        # [0.5, 300.0] — khoảng thời gian giữa các lần đổi tham số (giây)
+  change_interval: 4.0        # [0.5, 300.0] — khoảng thời gian giữa các lần đổi tham số (giây)
+  transition_window: 2.0       # [0.1, 10.0] — thời gian chuyển đổi mượt giữa 2 giá trị (giây)
 
 # --- Hiệu năng ---
 performance:

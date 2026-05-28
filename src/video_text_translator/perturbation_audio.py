@@ -74,6 +74,7 @@ class AudioPerturbationProcessor:
             duration=duration_s,
             change_interval=change_interval,
             rng=self.rng,
+            interpolation_window=self.config.transition_window,
         )
 
         tempo_schedule = scheduler.schedule(

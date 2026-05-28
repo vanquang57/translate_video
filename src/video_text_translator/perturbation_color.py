@@ -59,6 +59,7 @@ class ColorDriftProcessor:
             duration=3600.0,  # 1 hour max
             change_interval=config.change_interval,
             rng=rng,
+            interpolation_window=config.transition_window,
         )
 
         # Gamma schedule: values in [1.0 - gamma_range, 1.0 + gamma_range]

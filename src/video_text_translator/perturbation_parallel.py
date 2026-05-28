@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from .perturbation_overlay import OverlayProcessor
     from .perturbation_rotation import RotationDriftProcessor
     from .perturbation_spatial import SpatialTransformProcessor
+    from .perturbation_warp import LocalizedWarpProcessor
     from .progress import ProgressReporter
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ def _apply_transforms(
     frame: np.ndarray,
     timestamp: float,
     spatial: SpatialTransformProcessor | None,
+    warp: LocalizedWarpProcessor | None,
     rotation: RotationDriftProcessor | None,
     color: ColorDriftProcessor | None,
     overlay: OverlayProcessor | None,
@@ -63,6 +65,8 @@ def _apply_transforms(
     """Apply all transforms to a single frame. Thread-safe."""
     if spatial is not None:
         frame = spatial.transform_frame(frame, timestamp)
+    if warp is not None:
+        frame = warp.transform_frame(frame, timestamp)
     if rotation is not None:
         frame = rotation.transform_frame(frame, timestamp)
     if color is not None:
@@ -105,6 +109,7 @@ class ParallelFrameProcessor:
         encoder: FFmpegEncoder,
         frame_map: list[int] | None,
         spatial: SpatialTransformProcessor | None,
+        warp: LocalizedWarpProcessor | None,
         rotation: RotationDriftProcessor | None,
         color: ColorDriftProcessor | None,
         overlay: OverlayProcessor | None,
@@ -123,6 +128,7 @@ class ParallelFrameProcessor:
             encoder: Opened FFmpeg encoder.
             frame_map: Output-to-input frame index mapping (or None).
             spatial: Spatial transform processor.
+            warp: Localized warp processor.
             rotation: Rotation drift processor.
             color: Color drift processor.
             overlay: Overlay processor.
@@ -136,7 +142,7 @@ class ParallelFrameProcessor:
             self._num_workers, self._buffer_size,
         )
 
-        has_transforms = any(p is not None for p in [spatial, rotation, color, overlay])
+        has_transforms = any(p is not None for p in [spatial, warp, rotation, color, overlay])
 
         if not has_transforms:
             # No transforms — just read and write sequentially (fast path)
@@ -149,12 +155,12 @@ class ParallelFrameProcessor:
         with ThreadPoolExecutor(max_workers=self._num_workers) as pool:
             if frame_map is not None:
                 self._process_with_frame_map(
-                    cap, encoder, frame_map, spatial, rotation, color, overlay,
+                    cap, encoder, frame_map, spatial, warp, rotation, color, overlay,
                     fps, progress, pool,
                 )
             else:
                 self._process_sequential(
-                    cap, encoder, spatial, rotation, color, overlay,
+                    cap, encoder, spatial, warp, rotation, color, overlay,
                     fps, n_frames, progress, pool,
                 )
 
@@ -216,6 +222,7 @@ class ParallelFrameProcessor:
         cap: cv2.VideoCapture,
         encoder: FFmpegEncoder,
         spatial: SpatialTransformProcessor | None,
+        warp: LocalizedWarpProcessor | None,
         rotation: RotationDriftProcessor | None,
         color: ColorDriftProcessor | None,
         overlay: OverlayProcessor | None,
@@ -251,7 +258,7 @@ class ParallelFrameProcessor:
             futures = [
                 pool.submit(
                     _apply_transforms, frame, ts,
-                    spatial, rotation, color, overlay,
+                    spatial, warp, rotation, color, overlay,
                 )
                 for frame, ts in zip(batch_frames, batch_timestamps)
             ]
@@ -269,6 +276,7 @@ class ParallelFrameProcessor:
         encoder: FFmpegEncoder,
         frame_map: list[int],
         spatial: SpatialTransformProcessor | None,
+        warp: LocalizedWarpProcessor | None,
         rotation: RotationDriftProcessor | None,
         color: ColorDriftProcessor | None,
         overlay: OverlayProcessor | None,
@@ -322,7 +330,7 @@ class ParallelFrameProcessor:
             futures = [
                 pool.submit(
                     _apply_transforms, frame, ts,
-                    spatial, rotation, color, overlay,
+                    spatial, warp, rotation, color, overlay,
                 )
                 for frame, ts in zip(batch_frames, batch_timestamps)
             ]

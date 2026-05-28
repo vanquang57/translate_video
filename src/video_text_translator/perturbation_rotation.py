@@ -55,6 +55,7 @@ class RotationDriftProcessor:
             duration=3600.0,  # 1 hour max
             change_interval=config.change_interval,
             rng=rng,
+            interpolation_window=config.transition_window,
         )
 
         # Rotation schedule: angle in [-max_rotation_degrees, +max_rotation_degrees]
