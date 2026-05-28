@@ -59,12 +59,13 @@ def _encoder_available(encoder_name: str) -> bool:
         try:
             # Use a temp file as output — some encoders (nvenc on Windows)
             # don't work with "-f null -" or NUL as output.
+            # Use 256x256 resolution — NVENC requires minimum ~146x50.
             import tempfile
             tmp_file = os.path.join(tempfile.gettempdir(), f"_encoder_test_{encoder_name}.mp4")
             proc = subprocess.run(
                 [
                     "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                    "-f", "lavfi", "-i", "color=black:s=64x64:d=0.04:r=25",
+                    "-f", "lavfi", "-i", "color=black:s=256x256:d=0.04:r=25",
                     "-c:v", encoder_name,
                     "-frames:v", "1",
                     tmp_file,
