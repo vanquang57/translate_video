@@ -9,6 +9,7 @@ Features:
 - Progress bar
 - Log output area
 - Output saved next to input file
+- Perturb Video button with preset selection dialog
 - CLI still works independently via main.py
 """
 
@@ -39,6 +40,12 @@ from video_text_translator.config import build_config, deep_merge, load_yaml  # 
 from video_text_translator.detector import PaddleOCRDetector  # noqa: E402
 from video_text_translator.inpainter import OpenCVInpainter  # noqa: E402
 from video_text_translator.logging_config import setup_logging  # noqa: E402
+from video_text_translator.perturbation_config import (  # noqa: E402
+    PRESETS,
+    PerturbationConfig,
+    load_perturbation_config,
+)
+from video_text_translator.perturbation_pipeline import PerturbationPipeline  # noqa: E402
 from video_text_translator.pipeline import Pipeline  # noqa: E402
 from video_text_translator.renderer import PillowRenderer  # noqa: E402
 from video_text_translator.tracker import IoUContentTracker  # noqa: E402
@@ -75,6 +82,10 @@ class GuiProgressReporter:
     def set_stage(self, name: str) -> None:
         self._stage = name
         self._queue.put(("stage", name, self._total))
+
+    def set_info(self, key: str, value: str) -> None:
+        """Send an info key-value pair to display on the GUI."""
+        self._queue.put(("info", key, value))
 
     def close(self) -> None:
         pass
@@ -137,6 +148,12 @@ class TranslatorApp:
         self._stage_var = tk.StringVar(value="Idle")
         ttk.Label(prog_frame, textvariable=self._stage_var).pack(anchor=tk.W)
 
+        self._info_var = tk.StringVar(value="")
+        self._info_label = ttk.Label(
+            prog_frame, textvariable=self._info_var, foreground="gray"
+        )
+        self._info_label.pack(anchor=tk.W)
+
         self._progress = ttk.Progressbar(prog_frame, mode="determinate")
         self._progress.pack(fill=tk.X, pady=(5, 0))
 
@@ -157,8 +174,17 @@ class TranslatorApp:
         self._start_btn = ttk.Button(btn_frame, text="Start", command=self._start)
         self._start_btn.pack(side=tk.LEFT, padx=(0, 5))
 
+        self._perturb_btn = ttk.Button(
+            btn_frame, text="Perturb Video", command=self._show_perturb_dialog,
+            state=tk.DISABLED,
+        )
+        self._perturb_btn.pack(side=tk.LEFT, padx=(0, 5))
+
         self._quit_btn = ttk.Button(btn_frame, text="Quit", command=self._quit)
         self._quit_btn.pack(side=tk.RIGHT)
+
+        # --- File variable trace: enable/disable perturb button ---
+        self._file_var.trace_add("write", self._on_file_changed)
 
     def _setup_logging(self) -> None:
         setup_logging(verbose=False, quiet=False)
@@ -177,6 +203,204 @@ class TranslatorApp:
         if path:
             self._file_var.set(path)
 
+    def _on_file_changed(self, *_args: object) -> None:
+        """Enable/disable perturb button based on file selection."""
+        if self._running:
+            return
+        if self._file_var.get():
+            self._perturb_btn.config(state=tk.NORMAL)
+        else:
+            self._perturb_btn.config(state=tk.DISABLED)
+
+    # ------------------------------------------------------------------
+    # Perturbation dialog and execution
+    # ------------------------------------------------------------------
+
+    def _show_perturb_dialog(self) -> None:
+        """Open a modal dialog for preset selection."""
+        input_path = self._file_var.get()
+        if not input_path:
+            messagebox.showwarning("No file", "Please select an input video first.")
+            return
+        if self._running:
+            messagebox.showinfo("Running", "A process is already in progress.")
+            return
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Perturbation Preset")
+        dialog.geometry("420x380")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Preset selection
+        ttk.Label(dialog, text="Select perturbation preset:", font=("", 10, "bold")).pack(
+            anchor=tk.W, padx=15, pady=(15, 5)
+        )
+
+        preset_var = tk.StringVar(value="medium")
+
+        presets_frame = ttk.Frame(dialog, padding=(15, 0))
+        presets_frame.pack(fill=tk.X)
+
+        for preset_name in ("light", "medium", "heavy"):
+            ttk.Radiobutton(
+                presets_frame, text=preset_name.capitalize(),
+                variable=preset_var, value=preset_name,
+                command=lambda: self._toggle_custom_fields(custom_frame, preset_var),
+            ).pack(anchor=tk.W, pady=2)
+
+        ttk.Radiobutton(
+            presets_frame, text="Custom",
+            variable=preset_var, value="custom",
+            command=lambda: self._toggle_custom_fields(custom_frame, preset_var),
+        ).pack(anchor=tk.W, pady=2)
+
+        # Custom fields frame
+        custom_frame = ttk.LabelFrame(dialog, text="Custom Parameters", padding=10)
+        custom_frame.pack(fill=tk.X, padx=15, pady=(10, 5))
+
+        # Custom parameter fields
+        custom_fields: dict[str, tk.StringVar] = {}
+        param_defs = [
+            ("max_crop_percent", "Max Crop %", "5.0"),
+            ("speed_min", "Speed Min", "0.99"),
+            ("speed_max", "Speed Max", "1.01"),
+            ("max_zoom", "Max Zoom", "1.05"),
+            ("eq_range_db", "EQ Range (dB)", "2.0"),
+            ("change_interval", "Change Interval (s)", "10.0"),
+        ]
+
+        for i, (key, label, default) in enumerate(param_defs):
+            row = i // 2
+            col = (i % 2) * 2
+            ttk.Label(custom_frame, text=label).grid(
+                row=row, column=col, sticky=tk.W, padx=(0, 5), pady=2
+            )
+            var = tk.StringVar(value=default)
+            custom_fields[key] = var
+            ttk.Entry(custom_frame, textvariable=var, width=10).grid(
+                row=row, column=col + 1, sticky=tk.W, padx=(0, 15), pady=2
+            )
+
+        # Initially hide custom fields
+        self._toggle_custom_fields(custom_frame, preset_var)
+
+        # OK / Cancel buttons
+        btn_frame = ttk.Frame(dialog, padding=(15, 10))
+        btn_frame.pack(fill=tk.X)
+
+        def on_ok() -> None:
+            selected = preset_var.get()
+            custom_params: dict[str, float] | None = None
+
+            if selected == "custom":
+                # Parse custom fields
+                custom_params = {}
+                for key, var in custom_fields.items():
+                    try:
+                        custom_params[key] = float(var.get())
+                    except ValueError:
+                        messagebox.showerror(
+                            "Invalid value",
+                            f"Invalid numeric value for '{key}': {var.get()}",
+                            parent=dialog,
+                        )
+                        return
+                # Use medium as base preset for custom
+                selected = "medium"
+
+            dialog.destroy()
+            self._start_perturb(selected, custom_params)
+
+        def on_cancel() -> None:
+            dialog.destroy()
+
+        ttk.Button(btn_frame, text="OK", command=on_ok).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT)
+
+        # Center dialog on parent
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{x}+{y}")
+
+    @staticmethod
+    def _toggle_custom_fields(custom_frame: ttk.LabelFrame, preset_var: tk.StringVar) -> None:
+        """Show/hide custom parameter fields based on preset selection."""
+        if preset_var.get() == "custom":
+            for child in custom_frame.winfo_children():
+                child.configure(state="normal") if hasattr(child, "configure") else None
+            custom_frame.pack(fill=tk.X, padx=15, pady=(10, 5))
+        else:
+            custom_frame.pack_forget()
+
+    def _start_perturb(self, preset: str, custom_params: dict[str, float] | None) -> None:
+        """Start perturbation in a background thread."""
+        input_path = self._file_var.get()
+        inp = Path(input_path)
+
+        # Generate output path: {stem}_perturbed_{preset}{suffix}
+        preset_label = "custom" if custom_params else preset
+        output_path = str(
+            inp.parent / f"{inp.stem}_perturbed_{preset_label}{inp.suffix}"
+        )
+
+        self._running = True
+        self._start_btn.config(state=tk.DISABLED)
+        self._perturb_btn.config(state=tk.DISABLED)
+        self._clear_log()
+        self._stage_var.set("Starting perturbation...")
+        self._info_var.set("")
+        self._progress["value"] = 0
+
+        thread = threading.Thread(
+            target=self._run_perturb_pipeline,
+            args=(input_path, output_path, preset, custom_params),
+            daemon=True,
+        )
+        thread.start()
+        self._poll_queue()
+
+    def _run_perturb_pipeline(
+        self,
+        input_path: str,
+        output_path: str,
+        preset: str,
+        custom_params: dict[str, float] | None,
+    ) -> None:
+        """Run the perturbation pipeline in a background thread."""
+        try:
+            yaml_path = _PROJECT_ROOT / "configs" / "perturbation.yaml"
+
+            # Build param overrides
+            overrides: dict[str, object] = {
+                "input_path": input_path,
+                "output_path": output_path,
+            }
+            if custom_params:
+                overrides.update(custom_params)
+
+            config = load_perturbation_config(
+                yaml_path=yaml_path,
+                preset_override=preset,
+                param_overrides=overrides,
+            )
+
+            progress = GuiProgressReporter(self._msg_queue)
+            pipeline = PerturbationPipeline(config=config, progress=progress)
+            exit_code = pipeline.run()
+
+            if exit_code == 0:
+                self._msg_queue.put(("done", output_path, None))
+            else:
+                self._msg_queue.put(
+                    ("error", f"Perturbation pipeline exited with code {exit_code}", None)
+                )
+
+        except Exception as exc:
+            self._msg_queue.put(("error", str(exc), None))
+
     def _start(self) -> None:
         input_path = self._file_var.get()
         if not input_path:
@@ -192,8 +416,10 @@ class TranslatorApp:
 
         self._running = True
         self._start_btn.config(state=tk.DISABLED)
+        self._perturb_btn.config(state=tk.DISABLED)
         self._clear_log()
         self._stage_var.set("Starting...")
+        self._info_var.set("")
         self._progress["value"] = 0
 
         thread = threading.Thread(
@@ -303,6 +529,10 @@ class TranslatorApp:
                         self._progress["maximum"] = total
                         self._progress["value"] = 0
 
+                elif msg_type == "info":
+                    key, value = data1, data2
+                    self._info_var.set(f"{key}: {value}")
+
                 elif msg_type == "log":
                     self._append_log(data1)
 
@@ -312,6 +542,9 @@ class TranslatorApp:
                     self._append_log(f"\n✓ Output saved: {data1}")
                     self._running = False
                     self._start_btn.config(state=tk.NORMAL)
+                    self._perturb_btn.config(
+                        state=tk.NORMAL if self._file_var.get() else tk.DISABLED
+                    )
                     return
 
                 elif msg_type == "error":
@@ -319,6 +552,9 @@ class TranslatorApp:
                     self._append_log(f"\n✗ ERROR: {data1}")
                     self._running = False
                     self._start_btn.config(state=tk.NORMAL)
+                    self._perturb_btn.config(
+                        state=tk.NORMAL if self._file_var.get() else tk.DISABLED
+                    )
                     return
 
         except queue.Empty:

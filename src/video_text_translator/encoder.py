@@ -179,6 +179,7 @@ class FFmpegEncoder:
         fps: float,
         encoder_mode: Encoder_Mode = "auto",
         encoder_preset: str = "fast",
+        gop_size: int | None = None,
     ) -> None:
         self._output_path = output_path
         self._width = width
@@ -186,6 +187,7 @@ class FFmpegEncoder:
         self._fps = fps
         self._encoder_mode = encoder_mode
         self._encoder_preset = encoder_preset
+        self._gop_size = gop_size
         self._process: subprocess.Popen | None = None
         self._encoder_name: str = ""
         self._frames_written: int = 0
@@ -208,6 +210,12 @@ class FFmpegEncoder:
 
         encoder_args = _build_encoder_args(encoder_name, self._encoder_preset)
 
+        # GOP perturbation: add -g flag for custom keyframe interval
+        gop_args: list[str] = []
+        if self._gop_size is not None:
+            gop_args = ["-g", str(self._gop_size)]
+            logger.info("encoder: GOP size set to %d", self._gop_size)
+
         cmd = [
             "ffmpeg",
             "-y",
@@ -221,6 +229,7 @@ class FFmpegEncoder:
             "-i", "-",
             # Output encoding
             *encoder_args,
+            *gop_args,
             "-pix_fmt", "yuv420p",
             # Output file
             self._output_path,

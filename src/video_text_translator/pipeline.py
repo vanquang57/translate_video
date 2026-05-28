@@ -320,6 +320,15 @@ class Pipeline:
         fixed_font_size: dict[str, int | None],
     ) -> None:
         """Pass2 using multi-threaded pipeline with FFmpeg encoder."""
+        from .encoder import detect_best_encoder
+
+        # Report encoder info before starting.
+        perf = self.config.performance
+        encoder_name, encoder_desc = detect_best_encoder(perf.encoder)
+        self.progress.set_info("Encoder", encoder_desc)
+        workers = self._resolve_pass2_workers()
+        self.progress.set_info("Workers", f"{workers} threads (CPU inpaint+render)")
+
         self.progress.start(n_frames, "pass2 inpaint+render (parallel)")
         try:
             executor = ParallelPass2(
@@ -340,6 +349,17 @@ class Pipeline:
         finally:
             self.progress.close()
 
+    def _resolve_pass2_workers(self) -> int:
+        """Determine number of pass2 workers (mirrors parallel_pass2 logic)."""
+        perf = self.config.performance
+        if perf.pass2_mode == "sequential":
+            return 1
+        if perf.parallel_workers > 0:
+            return perf.parallel_workers
+        import os as _os
+        cores = _os.cpu_count() or 4
+        return max(1, min(cores - 2, 8))
+
     def _pass2_sequential(
         self,
         width: int,
@@ -351,6 +371,8 @@ class Pipeline:
         fixed_font_size: dict[str, int | None],
     ) -> None:
         """Pass2 using single-threaded loop with FFmpeg encoder."""
+        from .encoder import detect_best_encoder
+
         # Index entries by frame_index for O(1) lookup per frame.
         per_frame: dict[int, list[tuple[Text_Segment, Frame_Region_Entry]]] = {}
         for seg in segments:
@@ -359,6 +381,11 @@ class Pipeline:
 
         tmp_path = self._tmp_video_path()
         perf = self.config.performance
+
+        # Report encoder info before starting.
+        encoder_name, encoder_desc = detect_best_encoder(perf.encoder)
+        self.progress.set_info("Encoder", encoder_desc)
+        self.progress.set_info("Workers", "1 thread (sequential)")
 
         # Use FFmpeg encoder instead of cv2.VideoWriter for better
         # performance and hardware acceleration support.

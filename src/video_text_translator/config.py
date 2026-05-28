@@ -165,6 +165,37 @@ def build_argparser() -> argparse.ArgumentParser:
         "-v", "--verbose", action="store_true", help="Verbose logging"
     )
     parser.add_argument("--quiet", action="store_true", help="Errors only")
+
+    # --- Perturbation mode arguments ---
+    parser.add_argument(
+        "--perturb",
+        action="store_true",
+        default=False,
+        help=(
+            "Enable perturbation mode (mutually exclusive with translation). "
+            "Applies dynamic transformations to the input video."
+        ),
+    )
+    parser.add_argument(
+        "--perturb-preset",
+        choices=["light", "medium", "heavy"],
+        default=None,
+        dest="perturb_preset",
+        help=(
+            "Perturbation intensity preset: light, medium, or heavy "
+            "(default: medium when --perturb is specified)"
+        ),
+    )
+    parser.add_argument(
+        "--perturb-config",
+        default=None,
+        dest="perturb_config",
+        help=(
+            "Path to custom perturbation YAML config file "
+            "(default: configs/perturbation.yaml)"
+        ),
+    )
+
     return parser
 
 
@@ -349,6 +380,8 @@ def build_config(merged: dict[str, Any]) -> Config:
         overflow = Overflow_Config(
             expand_bbox_enabled=bool(ovf_d.get("expand_bbox_enabled", True)),
             expand_bbox_max=float(ovf_d.get("expand_bbox_max", 1.5)),
+            expand_bbox_max_w=float(ovf_d.get("expand_bbox_max_w", 0.0)),
+            expand_bbox_max_h=float(ovf_d.get("expand_bbox_max_h", 0.0)),
             word_wrap_enabled=bool(ovf_d.get("word_wrap_enabled", True)),
             word_wrap_max_lines=int(ovf_d.get("word_wrap_max_lines", 3)),
             condensed_enabled=bool(ovf_d.get("condensed_enabled", True)),

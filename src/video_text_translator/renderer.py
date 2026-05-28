@@ -74,6 +74,8 @@ class PillowRenderer:
         # Cache of (font_path, size) -> ImageFont so we don't reload the
         # font binary every frame.
         self._font_cache: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
+        # Track segments that already logged "does not fit" to avoid spam.
+        self._nofit_logged: set[str] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -105,14 +107,17 @@ class PillowRenderer:
             fixed_font_size=fixed_font_size,
         )
         if plan is None:
-            logger.warning(
-                "renderer: text does not fit even after fallbacks "
-                "(segment=%s, frame=%s, box=%dx%d)",
-                segment_id,
-                frame_index,
-                box.width,
-                box.height,
-            )
+            seg_key = segment_id or ""
+            if seg_key not in self._nofit_logged:
+                self._nofit_logged.add(seg_key)
+                logger.warning(
+                    "renderer: text does not fit even after fallbacks "
+                    "(segment=%s, first_frame=%s, box=%dx%d)",
+                    segment_id,
+                    frame_index,
+                    box.width,
+                    box.height,
+                )
             return frame
         return self._draw(frame, plan, style)
 
@@ -156,7 +161,10 @@ class PillowRenderer:
             )
 
         expanded_box = (
-            self._expand_box(box, ovf.expand_bbox_max, frame_w, frame_h)
+            self._expand_box(
+                box, ovf.effective_max_w, frame_w, frame_h,
+                factor_h=ovf.effective_max_h,
+            )
             if ovf.expand_bbox_enabled
             else None
         )
@@ -341,13 +349,21 @@ class PillowRenderer:
 
     @staticmethod
     def _expand_box(
-        box: Bounding_Box, factor: float, frame_w: int, frame_h: int
+        box: Bounding_Box, factor: float, frame_w: int, frame_h: int,
+        factor_h: float | None = None,
     ) -> Bounding_Box | None:
-        if factor <= 1.0:
+        """Expand box with separate horizontal/vertical factors.
+
+        If factor_h is None, factor is used for both dimensions.
+        """
+        factor_w = factor
+        if factor_h is None:
+            factor_h = factor
+        if factor_w <= 1.0 and factor_h <= 1.0:
             return None
         cx, cy = box.center
-        new_w = int(round(box.width * factor))
-        new_h = int(round(box.height * factor))
+        new_w = int(round(box.width * factor_w))
+        new_h = int(round(box.height * factor_h))
         # Center the expanded box on the original center, then clip to frame.
         new_x = int(round(cx - new_w / 2))
         new_y = int(round(cy - new_h / 2))

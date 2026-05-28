@@ -379,7 +379,9 @@ class Overflow_Config:
     """
 
     expand_bbox_enabled: bool = True
-    expand_bbox_max: float = 1.5  # multiplier of original bbox dimensions
+    expand_bbox_max: float = 1.5  # legacy: used when _w/_h not specified
+    expand_bbox_max_w: float = 0.0  # 0 = use expand_bbox_max; >0 = override horizontal
+    expand_bbox_max_h: float = 0.0  # 0 = use expand_bbox_max; >0 = override vertical
     word_wrap_enabled: bool = True
     word_wrap_max_lines: int = 3
     condensed_enabled: bool = True
@@ -391,6 +393,16 @@ class Overflow_Config:
                 f"renderer.overflow.expand_bbox_max must be in [1.0, 4.0] "
                 f"(got {self.expand_bbox_max})"
             )
+        if self.expand_bbox_max_w != 0.0 and not (1.0 <= self.expand_bbox_max_w <= 4.0):
+            raise ValueError(
+                f"renderer.overflow.expand_bbox_max_w must be 0 or in [1.0, 4.0] "
+                f"(got {self.expand_bbox_max_w})"
+            )
+        if self.expand_bbox_max_h != 0.0 and not (1.0 <= self.expand_bbox_max_h <= 4.0):
+            raise ValueError(
+                f"renderer.overflow.expand_bbox_max_h must be 0 or in [1.0, 4.0] "
+                f"(got {self.expand_bbox_max_h})"
+            )
         if not (1 <= self.word_wrap_max_lines <= 10):
             raise ValueError(
                 f"renderer.overflow.word_wrap_max_lines must be in [1, 10] "
@@ -400,6 +412,16 @@ class Overflow_Config:
             raise ValueError(
                 "renderer.overflow.condensed_font_path must be non-empty"
             )
+
+    @property
+    def effective_max_w(self) -> float:
+        """Effective horizontal expand factor."""
+        return self.expand_bbox_max_w if self.expand_bbox_max_w > 0 else self.expand_bbox_max
+
+    @property
+    def effective_max_h(self) -> float:
+        """Effective vertical expand factor."""
+        return self.expand_bbox_max_h if self.expand_bbox_max_h > 0 else self.expand_bbox_max
 
 
 Encoder_Mode = Literal["auto", "cpu", "nvenc", "qsv", "amf"]

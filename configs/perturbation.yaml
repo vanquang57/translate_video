@@ -1,0 +1,181 @@
+# ============================================================================
+# Cấu hình Perturbation cho Video Text Translator
+# Áp dụng biến đổi động (dynamic transformations) lên video.
+# Tham số dòng lệnh (CLI) sẽ ghi đè giá trị trong file này.
+# ============================================================================
+
+preset: medium          # light | medium | heavy
+seed: null              # null = random, integer = reproducible
+
+# ============================================================================
+# Preset definitions
+# Chọn preset qua key "preset" ở trên. Các tham số bên dưới ghi đè preset.
+# ============================================================================
+presets:
+  light:
+    # Minimal perturbation — khó phát hiện nhất, thay đổi rất nhẹ
+    temporal:
+      speed_min: 0.995          # [0.90, 1.0]
+      speed_max: 1.005          # [1.0, 1.10]
+      max_frame_drop_percent: 0.5   # [0, 20] %
+      micro_offset_ms: 20.0    # [0, 500] ms
+    spatial:
+      max_crop_percent: 3.0    # [0, 50] %
+      max_zoom: 1.03           # [1.0, 2.0]
+    audio:
+      tempo_min: 0.995         # [0.90, 1.0]
+      tempo_max: 1.005         # [1.0, 1.10]
+      eq_range_db: 1.0         # [0, 12.0] dB
+      ambience_volume_min_db: -40.0  # [-60, 0] dB
+      ambience_volume_max_db: -35.0  # [-60, 0] dB
+    color_drift:
+      gamma_range: 0.01        # [0.0, 0.1]
+      saturation_range: 0.02   # [0.0, 0.1]
+      contrast_range: 0.02     # [0.0, 0.1]
+      hue_range: 1.0           # [0, 5] degrees
+    rotation:
+      max_rotation_degrees: 0.5  # [0.0, 5.0] degrees
+    overlay:
+      opacity_max: 0.02        # [0.0, 0.1]
+    gop:
+      gop_min: 30              # [1, 300]
+      gop_max: 90              # [1, 300]
+    timing:
+      change_interval: 15.0    # [0.5, 300.0] seconds
+
+  medium:
+    # Moderate perturbation — cân bằng giữa hiệu quả và khó phát hiện
+    temporal:
+      speed_min: 0.99           # [0.90, 1.0]
+      speed_max: 1.01           # [1.0, 1.10]
+      max_frame_drop_percent: 1.0   # [0, 20] %
+      micro_offset_ms: 50.0    # [0, 500] ms
+    spatial:
+      max_crop_percent: 5.0    # [0, 50] %
+      max_zoom: 1.05           # [1.0, 2.0]
+    audio:
+      tempo_min: 0.99          # [0.90, 1.0]
+      tempo_max: 1.01          # [1.0, 1.10]
+      eq_range_db: 2.0         # [0, 12.0] dB
+      ambience_volume_min_db: -38.0  # [-60, 0] dB
+      ambience_volume_max_db: -30.0  # [-60, 0] dB
+    color_drift:
+      gamma_range: 0.02        # [0.0, 0.1]
+      saturation_range: 0.03   # [0.0, 0.1]
+      contrast_range: 0.03     # [0.0, 0.1]
+      hue_range: 2.0           # [0, 5] degrees
+    rotation:
+      max_rotation_degrees: 1.0  # [0.0, 5.0] degrees
+    overlay:
+      opacity_max: 0.03        # [0.0, 0.1]
+    gop:
+      gop_min: 15              # [1, 300]
+      gop_max: 120             # [1, 300]
+    timing:
+      change_interval: 10.0    # [0.5, 300.0] seconds
+
+  heavy:
+    # Aggressive perturbation — biến đổi mạnh, dễ phát hiện hơn nhưng hiệu quả cao
+    temporal:
+      speed_min: 0.97           # [0.90, 1.0]
+      speed_max: 1.03           # [1.0, 1.10]
+      max_frame_drop_percent: 3.0   # [0, 20] %
+      micro_offset_ms: 100.0   # [0, 500] ms
+    spatial:
+      max_crop_percent: 10.0   # [0, 50] %
+      max_zoom: 1.15           # [1.0, 2.0]
+    audio:
+      tempo_min: 0.97          # [0.90, 1.0]
+      tempo_max: 1.03          # [1.0, 1.10]
+      eq_range_db: 4.0         # [0, 12.0] dB
+      ambience_volume_min_db: -35.0  # [-60, 0] dB
+      ambience_volume_max_db: -25.0  # [-60, 0] dB
+    color_drift:
+      gamma_range: 0.04        # [0.0, 0.1]
+      saturation_range: 0.05   # [0.0, 0.1]
+      contrast_range: 0.05     # [0.0, 0.1]
+      hue_range: 3.0           # [0, 5] degrees
+    rotation:
+      max_rotation_degrees: 2.0  # [0.0, 5.0] degrees
+    overlay:
+      opacity_max: 0.05        # [0.0, 0.1]
+    gop:
+      gop_min: 10              # [1, 300]
+      gop_max: 150             # [1, 300]
+    timing:
+      change_interval: 5.0     # [0.5, 300.0] seconds
+
+# ============================================================================
+# Override individual parameters (takes precedence over preset)
+# Chỉ cần đặt tham số muốn ghi đè, phần còn lại lấy từ preset.
+# ============================================================================
+
+# --- Biến đổi thời gian (Temporal Drift) ---
+temporal:
+  enabled: true
+  speed_min: 0.99              # [0.90, 1.0] — tốc độ tối thiểu (1.0 = bình thường)
+  speed_max: 1.01              # [1.0, 1.10] — tốc độ tối đa
+  max_frame_drop_percent: 1.0  # [0, 20] — % frame tối đa được drop/duplicate
+  micro_offset_ms: 50.0        # [0, 500] — offset tối đa tại ranh giới segment (ms)
+
+# --- Biến đổi không gian (Spatial Transform) ---
+spatial:
+  enabled: true
+  max_crop_percent: 5.0        # [0, 50] — % crop tối đa so với frame
+  max_zoom: 1.05               # [1.0, 2.0] — mức zoom tối đa
+
+# --- Tái cấu trúc scene (Scene Recomposition) ---
+scene:
+  enabled: false
+  scene_threshold: 0.3         # [0.1, 1.0] — ngưỡng histogram diff để phát hiện scene boundary
+  max_scene_duration: 5.0      # [1.0, 60.0] — thời lượng tối đa micro-scene (giây)
+  transition_duration_ms: 500.0  # [100, 2000] — thời lượng cross-fade transition (ms)
+
+# --- Biến đổi âm thanh (Audio Perturbation) ---
+audio:
+  enabled: true
+  tempo_min: 0.99              # [0.90, 1.0] — tempo tối thiểu
+  tempo_max: 1.01              # [1.0, 1.10] — tempo tối đa
+  eq_range_db: 2.0             # [0, 12.0] — biên độ EQ adjustment (dB)
+  ambience_volume_min_db: -40.0  # [-60, 0] — volume tối thiểu ambient noise (dB)
+  ambience_volume_max_db: -30.0  # [-60, 0] — volume tối đa ambient noise (dB)
+
+# --- Kết hợp nhiều biến đổi (Multi-Transform Combo) ---
+combo:
+  enabled: false
+  intensity_factor: 0.5        # [0.1, 1.0] — hệ số giảm cường độ khi kết hợp
+
+# --- Biến đổi màu sắc (Color Drift — Wave 1) ---
+color_drift:
+  enabled: true
+  gamma_range: 0.02            # [0.0, 0.1] — độ lệch gamma so với 1.0
+  saturation_range: 0.03       # [0.0, 0.1] — độ lệch saturation so với 1.0
+  contrast_range: 0.03         # [0.0, 0.1] — độ lệch contrast so với 1.0
+  hue_range: 2.0               # [0, 5] — độ lệch hue (degrees)
+
+# --- Xoay nhẹ (Rotation Drift — Wave 1) ---
+rotation:
+  enabled: true
+  max_rotation_degrees: 1.0    # [0.0, 5.0] — góc xoay tối đa (degrees)
+
+# --- Lớp phủ (Overlay — Wave 1) ---
+overlay:
+  enabled: true
+  opacity_max: 0.03            # [0.0, 0.1] — opacity tối đa của overlay
+  grain_enabled: true          # bật/tắt noise grain
+  vignette_enabled: true       # bật/tắt vignette
+
+# --- GOP Perturbation (Wave 1) ---
+gop:
+  enabled: true
+  gop_min: 15                  # [1, 300] — kích thước GOP tối thiểu (frames)
+  gop_max: 120                 # [1, 300] — kích thước GOP tối đa (frames)
+
+# --- Thời gian thay đổi tham số ---
+timing:
+  change_interval: 10.0        # [0.5, 300.0] — khoảng thời gian giữa các lần đổi tham số (giây)
+
+# --- Hiệu năng ---
+performance:
+  encoder: auto                # auto | cpu | nvenc | qsv | amf
+  encoder_preset: fast         # ultrafast | fast | medium

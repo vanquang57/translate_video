@@ -53,6 +53,8 @@ from video_text_translator.detector import PaddleOCRDetector  # noqa: E402
 from video_text_translator.errors import InvalidConfigError  # noqa: E402
 from video_text_translator.inpainter import OpenCVInpainter  # noqa: E402
 from video_text_translator.logging_config import setup_logging  # noqa: E402
+from video_text_translator.perturbation_config import load_perturbation_config  # noqa: E402
+from video_text_translator.perturbation_pipeline import PerturbationPipeline  # noqa: E402
 from video_text_translator.pipeline import Pipeline  # noqa: E402
 from video_text_translator.progress import ProgressReporter  # noqa: E402
 from video_text_translator.renderer import PillowRenderer  # noqa: E402
@@ -63,11 +65,63 @@ from video_text_translator.translator_llm import LlmTranslator  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
+def _run_perturbation(args) -> int:
+    """Handle --perturb mode: load config, run PerturbationPipeline.
+
+    Returns exit code (0=success, 1=config error, 2=input error).
+    """
+    # Validate required --input and --output
+    if not args.input_path:
+        logger.error("--input is required when using --perturb")
+        return 2
+    if not args.output_path:
+        logger.error("--output is required when using --perturb")
+        return 2
+
+    # Determine perturbation config file path
+    config_path = args.perturb_config or "configs/perturbation.yaml"
+
+    # Validate config path exists and is valid YAML
+    config_file = Path(config_path)
+    if not config_file.is_file():
+        logger.error(
+            "perturbation config file not found: %s", config_path
+        )
+        return 1
+
+    # Determine preset (default to "medium" when --perturb without --perturb-preset)
+    preset = args.perturb_preset or "medium"
+
+    # Load perturbation config
+    try:
+        perturb_config = load_perturbation_config(
+            yaml_path=config_path,
+            preset_override=preset,
+            param_overrides={
+                "input_path": args.input_path,
+                "output_path": args.output_path,
+            },
+        )
+    except InvalidConfigError as exc:
+        logger.error("perturbation config error: %s", exc)
+        return 1
+
+    # Run the perturbation pipeline
+    progress = ProgressReporter()
+    pipeline = PerturbationPipeline(config=perturb_config, progress=progress)
+    return pipeline.run()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_argparser()
     args = parser.parse_args(argv)
     setup_logging(verbose=args.verbose, quiet=args.quiet)
 
+    # --- Perturbation mode ---
+    if args.perturb:
+        return _run_perturbation(args)
+
+    # --- Translation mode (original behavior) ---
     try:
         config = load_config(args)
     except InvalidConfigError as exc:

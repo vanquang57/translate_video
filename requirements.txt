@@ -25,6 +25,10 @@ PyYAML==6.0.2  # paddlex pin == 6.0.2
 psutil==7.2.2
 tqdm==4.67.3
 
+# Audio perturbation
+pydub>=0.25.1          # audio manipulation (requires FFmpeg on PATH)
+scipy>=1.11.0          # audio filtering (EQ bandpass)
+
 # Dev / testing (optional, can be installed separately)
 pytest==8.4.2
 hypothesis==6.152.9

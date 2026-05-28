@@ -37,6 +37,10 @@ class ProgressReporter:
         if self._bar is not None:
             self._bar.set_description(name)
 
+    def set_info(self, key: str, value: str) -> None:
+        """Display an info key-value pair. Overridden by GUI reporter."""
+        pass
+
     def close(self) -> None:
         if self._bar is not None:
             self._bar.close()

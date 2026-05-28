@@ -37,8 +37,8 @@ tracker:
   #   - Text di chuyển bị lag?  → tăng smooth_ema_alpha lên 0.4-0.5
   #   - Muốn text tĩnh 100%?   → giảm smooth_ema_alpha xuống 0.2
   #
-  smooth_lock_threshold: 3            # [0, 20] px — ngưỡng khóa vị trí; dưới mức này coi là noise, không di chuyển
-  smooth_ema_alpha: 0.4               # (0.0, 1.0] — tốc độ bám theo chuyển động thật; nhỏ = mượt, lớn = nhanh
+  smooth_lock_threshold: 2            # [0, 20] px — ngưỡng khóa vị trí; dưới mức này coi là noise, không di chuyển
+  smooth_ema_alpha: 0.5               # (0.0, 1.0] — tốc độ bám theo chuyển động thật; nhỏ = mượt, lớn = nhanh
  # Nếu text giật nhẹ: tăng smooth_lock_threshold lên 4-5
  # Nếu text di chuyển bị lag: tăng smooth_ema_alpha lên 0.4-0.5
  # Nếu muốn text tĩnh hoàn toàn không nhúc nhích: giảm smooth_ema_alpha xuống 0.2
@@ -49,7 +49,7 @@ tracker:
 inpainter:
   algorithm: telea         # thuật toán: telea (nhanh, mặc định) | ns (Navier-Stokes, mượt hơn nhưng chậm)
   radius: 3                # [1, 20] — bán kính vùng lấp (lớn = lấp rộng hơn, dễ bị mờ)
-  padding: 4               # [0, 20] — mở rộng vùng xóa thêm N px mỗi cạnh (tránh sót viền chữ)
+  padding: 6               # [0, 20] — mở rộng vùng xóa thêm N px mỗi cạnh (tránh sót viền chữ)
 
 # ============================================================================
 # Dịch thuật
@@ -91,8 +91,8 @@ translator:
 # ============================================================================
 renderer:
   font_path: fonts/NotoSans-Regular.ttf   # đường dẫn font chính
-  font_size_max: 64        # [8, 512] — cỡ chữ tối đa (auto-fit sẽ chọn lớn nhất vừa box)
-  font_size_min: 20        # [6, font_size_max] — cỡ chữ tối thiểu (nhỏ hơn = không render)
+  font_size_max: 128        # [8, 512] — cỡ chữ tối đa (auto-fit sẽ chọn lớn nhất vừa box)
+  font_size_min: 32        # [6, font_size_max] — cỡ chữ tối thiểu (nhỏ hơn = không render)
   text_rgb: [255, 255, 0]  # màu chữ [R, G, B] — vàng mặc định
 
   # --- Viền chữ (stroke) ---
@@ -114,7 +114,9 @@ renderer:
   # Thứ tự áp dụng: 1) mở rộng box → 2) xuống dòng → 3) font hẹp
   overflow:
     expand_bbox_enabled: true              # cho phép mở rộng box
-    expand_bbox_max: 1.2                   # [1.0, 4.0] — mở rộng tối đa N lần kích thước gốc
+    expand_bbox_max: 2                   # [1.0, 4.0] — mở rộng tối đa N lần (dùng khi _w/_h không đặt)
+    expand_bbox_max_w: 1.2                   # [0 hoặc 1.0-4.0] — mở rộng chiều NGANG riêng (0 = dùng expand_bbox_max)
+    expand_bbox_max_h: 2                   # [0 hoặc 1.0-4.0] — mở rộng chiều DỌC riêng (0 = dùng expand_bbox_max)
     word_wrap_enabled: true                # cho phép xuống dòng
     word_wrap_max_lines: 3                 # [1, 10] — số dòng tối đa
     condensed_enabled: true                # cho phép dùng font hẹp (condensed)
@@ -124,8 +126,8 @@ renderer:
 # Hiệu năng
 # ============================================================================
 performance:
-  ocr_stride: 10                       # [1, 10] — chạy OCR mỗi N frame (10 = nhanh, 1 = chính xác nhất)
-  ocr_downscale: 1.5                   # [1.0, 4.0] — thu nhỏ frame trước khi OCR (lớn = nhanh, mất chi tiết)
+  ocr_stride: 1                       # [1, 10] — chạy OCR mỗi N frame (10 = nhanh, 1 = chính xác nhất)
+  ocr_downscale: 2                   # [1.0, 4.0] — thu nhỏ frame trước khi OCR (lớn = nhanh, mất chi tiết)
   io_buffer_frames: 8                  # số frame buffer khi đọc/ghi video
   max_duration_seconds: 7200           # giới hạn thời lượng video (giây) — mặc định 2 giờ
   max_file_size_bytes: 5368709120      # giới hạn dung lượng file (bytes) — mặc định 5 GB
