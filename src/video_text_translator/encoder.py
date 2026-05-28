@@ -57,20 +57,37 @@ def _encoder_available(encoder_name: str) -> bool:
     # For hardware encoders, actually test encoding a single frame.
     if encoder_name in ("h264_nvenc", "h264_qsv", "h264_amf"):
         try:
+            # Use a temp file as output — some encoders (nvenc on Windows)
+            # don't work with "-f null -" or NUL as output.
+            import tempfile
+            tmp_file = os.path.join(tempfile.gettempdir(), f"_encoder_test_{encoder_name}.mp4")
             proc = subprocess.run(
                 [
                     "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                     "-f", "lavfi", "-i", "color=black:s=64x64:d=0.04:r=25",
                     "-c:v", encoder_name,
                     "-frames:v", "1",
-                    "-f", "null", "-",
+                    tmp_file,
                 ],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=15,
             )
+            # Clean up temp file
+            try:
+                if os.path.exists(tmp_file):
+                    os.unlink(tmp_file)
+            except OSError:
+                pass
+
+            if proc.returncode != 0:
+                logger.info(
+                    "encoder probe: %s test encode failed: %s",
+                    encoder_name, proc.stderr.strip(),
+                )
             return proc.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            logger.info("encoder probe: %s exception: %s", encoder_name, exc)
             return False
 
     # Software encoders (libx264) — listing is sufficient.
