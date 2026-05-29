@@ -137,17 +137,22 @@ class PillowRenderer:
     ) -> _LayoutPlan | None:
         """Try the fallback cascade and return the first plan that fits.
 
-        Cascade:
+        When ``fixed_font_size`` is provided, the font size is NEVER changed.
+        Instead, the box is expanded as needed to fit the text at that size.
+        This eliminates font-size jitter for moving/zooming text.
+
+        Cascade (with fixed_font_size):
+          0. Try original box at fixed size
+          1. Try expanded box at fixed size
+          2. Try wrapped (multi-line) at fixed size with original/expanded box
+          3. Force-expand box to exactly fit text at fixed size (clipped to frame)
+
+        Cascade (without fixed_font_size — auto-fit):
           0. Original box, single line, regular font
           1. Expanded box, single line, regular font
           2. Original box, wrapped, regular font
           3. Expanded box, wrapped, regular font
           4. Steps 0-3 again with the condensed font.
-
-        When ``fixed_font_size`` is provided and no cascade step fits,
-        we retry WITHOUT the fixed constraint so the text still renders
-        (at a potentially different size) rather than disappearing entirely.
-        This prevents flickering frames where text vanishes.
         """
         regular = style.font_path or self._default_font_path
         ovf = style.overflow or Overflow_Config()
@@ -175,7 +180,7 @@ class PillowRenderer:
         )
         max_lines = ovf.word_wrap_max_lines if ovf.word_wrap_enabled else 1
 
-        # Single-line attempts
+        # --- Standard cascade ---
         for path in font_paths:
             for candidate_box in (box, expanded_box):
                 if candidate_box is None:
@@ -185,7 +190,6 @@ class PillowRenderer:
                 )
                 if plan is not None:
                     return plan
-            # Multi-line attempts at the original (preferred) and expanded box.
             if max_lines >= 2:
                 for candidate_box in (box, expanded_box):
                     if candidate_box is None:
@@ -196,9 +200,47 @@ class PillowRenderer:
                     if plan is not None:
                         return plan
 
-        # If fixed_font_size was specified but nothing fit, retry without it.
-        # This ensures the text still renders (possibly at a smaller size)
-        # rather than disappearing for some frames, which causes flickering.
+        # --- Force-fit: when fixed_font_size is set, create a box that
+        # exactly fits the text rather than changing font size. ---
+        if fixed_font_size is not None:
+            path = regular
+            font = self._get_font(path, fixed_font_size)
+            # Try single line first.
+            text_w, text_h = self._block_size((text,), font, style)
+            force_box = self._force_expand_box(box, text_w, text_h, frame_w, frame_h)
+            if force_box is not None and self._fits((text_w, text_h), force_box):
+                line_h = self._line_height(font, style)
+                return _LayoutPlan(
+                    box=force_box,
+                    font_path=path,
+                    font_size=fixed_font_size,
+                    lines=(text,),
+                    line_height=line_h,
+                )
+            # Try wrapped with force-expand.
+            if max_lines >= 2:
+                for n_lines in range(2, max_lines + 1):
+                    lines = self._wrap_into_lines(text, n_lines)
+                    if lines is None:
+                        continue
+                    block_w, block_h = self._block_size(lines, font, style)
+                    force_box = self._force_expand_box(
+                        box, block_w, block_h, frame_w, frame_h
+                    )
+                    if force_box is not None and self._fits(
+                        (block_w, block_h), force_box
+                    ):
+                        line_h = self._line_height(font, style)
+                        return _LayoutPlan(
+                            box=force_box,
+                            font_path=path,
+                            font_size=fixed_font_size,
+                            lines=tuple(lines),
+                            line_height=line_h,
+                        )
+
+        # --- Last resort: retry without fixed constraint so text still
+        # renders rather than disappearing (prevents flickering). ---
         if fixed_font_size is not None:
             for path in font_paths:
                 for candidate_box in (box, expanded_box):
@@ -220,6 +262,36 @@ class PillowRenderer:
                             return plan
 
         return None
+
+    @staticmethod
+    def _force_expand_box(
+        box: Bounding_Box,
+        need_w: int,
+        need_h: int,
+        frame_w: int,
+        frame_h: int,
+    ) -> Bounding_Box | None:
+        """Expand box centered on its original center to fit (need_w, need_h).
+
+        The result is clipped to frame bounds. Returns None if the needed
+        size exceeds the frame entirely.
+        """
+        # Use at least the original box size.
+        new_w = max(box.width, need_w)
+        new_h = max(box.height, need_h)
+        cx, cy = box.center
+        new_x = int(round(cx - new_w / 2))
+        new_y = int(round(cy - new_h / 2))
+        # Clip to frame.
+        x1 = max(0, new_x)
+        y1 = max(0, new_y)
+        x2 = min(frame_w, new_x + new_w)
+        y2 = min(frame_h, new_y + new_h)
+        clipped_w = x2 - x1
+        clipped_h = y2 - y1
+        if clipped_w <= 0 or clipped_h <= 0:
+            return None
+        return Bounding_Box(x1, y1, clipped_w, clipped_h)
 
     def _fit_single_line(
         self,
