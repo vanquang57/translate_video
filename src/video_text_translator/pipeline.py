@@ -35,7 +35,7 @@ from .detector import IDetector
 from .encoder import FFmpegEncoder
 from .errors import InvalidInputError, OutputWriteError, PipelineError
 from .inpainter import IInpainter
-from .models import Bounding_Box, Config, Frame_Region_Entry, Text_Segment
+from .models import Bounding_Box, Config, Frame_Region_Entry, Subtitle_Region, Text_Segment
 from .parallel_pass2 import ParallelPass2, _should_use_parallel
 from .progress import ProgressReporter
 from .renderer import IRenderer
@@ -90,6 +90,9 @@ class Pipeline:
         translator: ITranslator,
         renderer: IRenderer,
         progress: ProgressReporter | None = None,
+        export_subtitles: bool = False,
+        subtitle_region: Subtitle_Region | None = None,
+        remove_text_in_region: bool = False,
     ) -> None:
         self.config = config
         self.detector = detector
@@ -98,6 +101,9 @@ class Pipeline:
         self.translator = translator
         self.renderer = renderer
         self.progress = progress or ProgressReporter()
+        self._export_subtitles = export_subtitles
+        self._subtitle_region = subtitle_region
+        self._remove_text_in_region = remove_text_in_region
 
     # ------------------------------------------------------------------
     # Entry point
@@ -126,6 +132,11 @@ class Pipeline:
                 return self._verify_output()
 
             translations = self._translate_segments(segments)
+
+            # --- SRT subtitle export ---
+            if self._export_subtitles:
+                self._export_srt(segments, translations)
+
             self._pass2(width, height, fps, n_frames, segments, translations)
             self._mux_audio()
             return self._verify_output()
@@ -137,6 +148,29 @@ class Pipeline:
             return 4
         finally:
             self.progress.close()
+
+    # ------------------------------------------------------------------
+    # Subtitle export
+    # ------------------------------------------------------------------
+
+    def _export_srt(
+        self,
+        segments: Sequence[Text_Segment],
+        translations: dict[str, str],
+    ) -> None:
+        """Generate and write the SRT file. Non-critical — logs on failure."""
+        from .subtitle_exporter import export_srt
+
+        try:
+            srt_path = export_srt(
+                segments=segments,
+                translations=translations,
+                video_output_path=self.config.output_path,
+                region=self._subtitle_region,
+            )
+            logger.info("SRT exported: %s", srt_path)
+        except Exception as exc:
+            logger.warning("SRT export failed (non-critical): %s", exc)
 
     # ------------------------------------------------------------------
     # Stage helpers
@@ -343,6 +377,8 @@ class Pipeline:
                 n_frames=n_frames,
                 fixed_font_size=fixed_font_size,
                 progress=self.progress,
+                remove_text_in_region=self._remove_text_in_region,
+                subtitle_region=self._subtitle_region,
             )
             tmp_path = executor.run()
             self._tmp_video = tmp_path
@@ -418,6 +454,13 @@ class Pipeline:
                     boxes: list[Bounding_Box] = [e.box for _seg, e in hits]
                     frame = self.inpainter.inpaint_frame(frame, boxes)
                     for seg, entry in hits:
+                        # Skip rendering if remove_text_in_region is active
+                        # and segment center falls inside the region
+                        if self._remove_text_in_region and self._subtitle_region is not None:
+                            if seg.entries:
+                                cx, cy = seg.entries[0].box.center
+                                if self._subtitle_region.contains_point(cx, cy):
+                                    continue
                         text_vi = translations.get(seg.segment_id, seg.canonical_text)
                         frame = self.renderer.render(
                             frame,

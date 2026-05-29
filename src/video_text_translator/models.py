@@ -61,6 +61,33 @@ class Bounding_Box:
         return self.width * self.height
 
 
+@dataclass(frozen=True, slots=True)
+class Subtitle_Region:
+    """A rectangular region on the video frame for filtering subtitle text."""
+
+    x: int
+    y: int
+    width: int
+    height: int
+
+    def __post_init__(self) -> None:
+        if self.x < 0 or self.y < 0:
+            raise ValueError(
+                f"Subtitle_Region origin must be non-negative (got x={self.x}, y={self.y})"
+            )
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError(
+                f"Subtitle_Region dimensions must be positive (got width={self.width}, height={self.height})"
+            )
+
+    def contains_point(self, px: float, py: float) -> bool:
+        """Return True if the point (px, py) falls inside this region."""
+        return (
+            self.x <= px <= self.x + self.width
+            and self.y <= py <= self.y + self.height
+        )
+
+
 # ---------------------------------------------------------------------------
 # OCR / Tracking
 # ---------------------------------------------------------------------------
@@ -246,6 +273,11 @@ class Tracker_Config:
     max_active_segments: int = 100
     smooth_lock_threshold: int = 3  # px — jitter below this is locked out
     smooth_ema_alpha: float = 0.3   # EMA responsiveness (0, 1]
+    # One Euro Filter parameters (adaptive smoothing)
+    smooth_one_euro_enabled: bool = True   # enable One Euro Filter (replaces EMA when True)
+    smooth_one_euro_min_cutoff: float = 0.15  # low = smoother when static
+    smooth_one_euro_beta: float = 0.5        # high = faster response to motion
+    smooth_one_euro_d_cutoff: float = 1.0    # cutoff for derivative filter
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.iou_threshold <= 1.0):
@@ -280,6 +312,21 @@ class Tracker_Config:
             raise ValueError(
                 f"tracker.smooth_ema_alpha must be in (0.0, 1.0] "
                 f"(got {self.smooth_ema_alpha})"
+            )
+        if not (0.001 <= self.smooth_one_euro_min_cutoff <= 10.0):
+            raise ValueError(
+                f"tracker.smooth_one_euro_min_cutoff must be in [0.001, 10.0] "
+                f"(got {self.smooth_one_euro_min_cutoff})"
+            )
+        if not (0.0 <= self.smooth_one_euro_beta <= 10.0):
+            raise ValueError(
+                f"tracker.smooth_one_euro_beta must be in [0.0, 10.0] "
+                f"(got {self.smooth_one_euro_beta})"
+            )
+        if not (0.001 <= self.smooth_one_euro_d_cutoff <= 10.0):
+            raise ValueError(
+                f"tracker.smooth_one_euro_d_cutoff must be in [0.001, 10.0] "
+                f"(got {self.smooth_one_euro_d_cutoff})"
             )
 
 

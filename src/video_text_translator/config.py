@@ -342,6 +342,10 @@ def build_config(merged: dict[str, Any]) -> Config:
             max_active_segments=int(trk_d.get("max_active_segments", 100)),
             smooth_lock_threshold=int(trk_d.get("smooth_lock_threshold", 3)),
             smooth_ema_alpha=float(trk_d.get("smooth_ema_alpha", 0.3)),
+            smooth_one_euro_enabled=bool(trk_d.get("smooth_one_euro_enabled", True)),
+            smooth_one_euro_min_cutoff=float(trk_d.get("smooth_one_euro_min_cutoff", 0.3)),
+            smooth_one_euro_beta=float(trk_d.get("smooth_one_euro_beta", 0.5)),
+            smooth_one_euro_d_cutoff=float(trk_d.get("smooth_one_euro_d_cutoff", 1.0)),
         )
 
         ip_d = merged.get("inpainter", {}) or {}

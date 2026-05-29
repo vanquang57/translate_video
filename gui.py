@@ -24,6 +24,10 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import cv2
+import numpy as np
+from PIL import Image, ImageTk
+
 # ---------------------------------------------------------------------------
 # Bootstrap: ensure src/ is importable and .env is loaded
 # ---------------------------------------------------------------------------
@@ -36,6 +40,7 @@ from main import _load_dotenv  # noqa: E402
 
 _load_dotenv(_PROJECT_ROOT / ".env")
 
+from video_text_translator.models import Subtitle_Region  # noqa: E402
 from video_text_translator.config import build_config, deep_merge, load_yaml  # noqa: E402
 from video_text_translator.detector import PaddleOCRDetector  # noqa: E402
 from video_text_translator.inpainter import OpenCVInpainter  # noqa: E402
@@ -112,6 +117,217 @@ class QueueLogHandler(logging.Handler):
 
 
 # ---------------------------------------------------------------------------
+# Region Selector Dialog
+# ---------------------------------------------------------------------------
+
+
+class RegionSelectorDialog:
+    """Modal dialog for selecting a subtitle region on a video frame."""
+
+    MAX_WIDTH = 800
+    MAX_HEIGHT = 700
+
+    def __init__(self, parent: tk.Tk, video_path: str) -> None:
+        self.result: Subtitle_Region | None = None
+        self._parent = parent
+        self._video_path = video_path
+
+        # Rectangle drawing state
+        self._rect_start: tuple[int, int] | None = None
+        self._rect_end: tuple[int, int] | None = None
+        self._rect_id: int | None = None
+
+        # Open video to get metadata
+        self._cap = cv2.VideoCapture(video_path)
+        if not self._cap.isOpened():
+            messagebox.showerror("Error", f"Cannot open video: {video_path}", parent=parent)
+            return
+
+        self._total_frames = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self._video_width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self._video_height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # Compute scale to fit within MAX_WIDTH x MAX_HEIGHT
+        self._scale = min(
+            self.MAX_WIDTH / self._video_width,
+            self.MAX_HEIGHT / self._video_height,
+            1.0,  # Don't upscale
+        )
+        self._display_width = int(self._video_width * self._scale)
+        self._display_height = int(self._video_height * self._scale)
+
+        # Build the dialog window
+        self._dialog = tk.Toplevel(parent)
+        self._dialog.title("Select Subtitle Region")
+        self._dialog.transient(parent)
+        self._dialog.resizable(False, False)
+
+        self._build_ui()
+        self._display_frame(0)
+
+        # Make modal
+        self._dialog.grab_set()
+
+        # Center on parent
+        self._dialog.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - self._dialog.winfo_width()) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - self._dialog.winfo_height()) // 2
+        self._dialog.geometry(f"+{x}+{y}")
+
+    def _build_ui(self) -> None:
+        """Build the dialog UI components."""
+        # Canvas for video frame display
+        self._canvas = tk.Canvas(
+            self._dialog,
+            width=self._display_width,
+            height=self._display_height,
+            cursor="crosshair",
+        )
+        self._canvas.pack(padx=10, pady=(10, 5))
+
+        # Bind mouse events for rectangle drawing
+        self._canvas.bind("<ButtonPress-1>", self._on_mouse_press)
+        self._canvas.bind("<B1-Motion>", self._on_mouse_drag)
+        self._canvas.bind("<ButtonRelease-1>", self._on_mouse_release)
+
+        # Frame slider
+        slider_frame = ttk.Frame(self._dialog, padding=(10, 5))
+        slider_frame.pack(fill=tk.X)
+
+        ttk.Label(slider_frame, text="Frame:").pack(side=tk.LEFT)
+        self._slider = ttk.Scale(
+            slider_frame,
+            from_=0,
+            to=max(self._total_frames - 1, 0),
+            orient=tk.HORIZONTAL,
+            command=self._on_slider_change,
+        )
+        self._slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+
+        # OK / Cancel buttons
+        btn_frame = ttk.Frame(self._dialog, padding=10)
+        btn_frame.pack(fill=tk.X)
+
+        ttk.Button(btn_frame, text="OK", command=self._on_ok).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="Cancel", command=self._on_cancel).pack(side=tk.LEFT)
+
+    def _display_frame(self, frame_index: int) -> None:
+        """Read and display a specific frame from the video."""
+        self._cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+        ret, frame = self._cap.read()
+        if not ret:
+            return
+
+        # Convert BGR to RGB
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        # Resize to display dimensions
+        frame_resized = cv2.resize(
+            frame_rgb, (self._display_width, self._display_height), interpolation=cv2.INTER_AREA
+        )
+
+        # Convert to PIL Image and then to PhotoImage
+        pil_image = Image.fromarray(frame_resized)
+        self._photo = ImageTk.PhotoImage(pil_image)
+
+        # Update canvas
+        self._canvas.delete("frame")
+        self._canvas.create_image(0, 0, anchor=tk.NW, image=self._photo, tags="frame")
+
+        # Redraw rectangle if one exists
+        self._redraw_rectangle()
+
+    def _on_slider_change(self, value: str) -> None:
+        """Handle slider movement to seek through frames."""
+        frame_index = int(float(value))
+        self._display_frame(frame_index)
+
+    def _on_mouse_press(self, event: tk.Event) -> None:
+        """Start drawing a rectangle."""
+        self._rect_start = (event.x, event.y)
+        self._rect_end = None
+        # Remove existing rectangle
+        if self._rect_id is not None:
+            self._canvas.delete(self._rect_id)
+            self._rect_id = None
+
+    def _on_mouse_drag(self, event: tk.Event) -> None:
+        """Update rectangle as mouse is dragged."""
+        if self._rect_start is None:
+            return
+        self._rect_end = (event.x, event.y)
+        self._redraw_rectangle()
+
+    def _on_mouse_release(self, event: tk.Event) -> None:
+        """Finalize rectangle on mouse release."""
+        if self._rect_start is None:
+            return
+        self._rect_end = (event.x, event.y)
+        self._redraw_rectangle()
+
+    def _redraw_rectangle(self) -> None:
+        """Draw or update the selection rectangle on the canvas."""
+        if self._rect_id is not None:
+            self._canvas.delete(self._rect_id)
+            self._rect_id = None
+
+        if self._rect_start is not None and self._rect_end is not None:
+            x1, y1 = self._rect_start
+            x2, y2 = self._rect_end
+            self._rect_id = self._canvas.create_rectangle(
+                x1, y1, x2, y2, outline="red", width=2, tags="rect"
+            )
+
+    def _on_ok(self) -> None:
+        """Convert canvas rectangle to video pixel coordinates and close."""
+        if self._rect_start is not None and self._rect_end is not None:
+            # Get canvas coordinates
+            x1, y1 = self._rect_start
+            x2, y2 = self._rect_end
+
+            # Normalize so (x1, y1) is top-left and (x2, y2) is bottom-right
+            cx1 = min(x1, x2)
+            cy1 = min(y1, y2)
+            cx2 = max(x1, x2)
+            cy2 = max(y1, y2)
+
+            # Clamp to canvas bounds
+            cx1 = max(0, min(cx1, self._display_width))
+            cy1 = max(0, min(cy1, self._display_height))
+            cx2 = max(0, min(cx2, self._display_width))
+            cy2 = max(0, min(cy2, self._display_height))
+
+            # Convert to original video pixel space
+            vx = int(cx1 / self._scale)
+            vy = int(cy1 / self._scale)
+            vw = int((cx2 - cx1) / self._scale)
+            vh = int((cy2 - cy1) / self._scale)
+
+            # Only create region if it has positive dimensions
+            if vw > 0 and vh > 0:
+                self.result = Subtitle_Region(x=vx, y=vy, width=vw, height=vh)
+
+        self._close()
+
+    def _on_cancel(self) -> None:
+        """Close without setting a result."""
+        self._close()
+
+    def _close(self) -> None:
+        """Release resources and close the dialog."""
+        if self._cap is not None:
+            self._cap.release()
+            self._cap = None
+        self._dialog.grab_release()
+        self._dialog.destroy()
+
+    def show(self) -> Subtitle_Region | None:
+        """Show the dialog modally and return the result."""
+        self._parent.wait_window(self._dialog)
+        return self.result
+
+
+# ---------------------------------------------------------------------------
 # Main GUI Application
 # ---------------------------------------------------------------------------
 
@@ -140,6 +356,49 @@ class TranslatorApp:
 
         browse_btn = ttk.Button(file_frame, text="Browse...", command=self._browse)
         browse_btn.pack(side=tk.RIGHT)
+
+        # --- Subtitle Region controls ---
+        subtitle_frame = ttk.LabelFrame(self.root, text="Subtitle Region", padding=10)
+        subtitle_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        region_row = ttk.Frame(subtitle_frame)
+        region_row.pack(fill=tk.X)
+
+        self._region_btn = ttk.Button(
+            region_row, text="Select Region",
+            command=self._open_region_selector,
+            state=tk.DISABLED,
+        )
+        self._region_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self._region_label = ttk.Label(region_row, text="")
+        self._region_label.pack(side=tk.LEFT, padx=(0, 5))
+
+        self._clear_region_btn = ttk.Button(
+            region_row, text="Clear",
+            command=self._clear_region,
+            state=tk.DISABLED,
+        )
+        self._clear_region_btn.pack(side=tk.LEFT)
+
+        self._subtitle_region: Subtitle_Region | None = None
+
+        # Checkboxes (enabled only when region is selected)
+        self._export_srt_var = tk.BooleanVar(value=False)
+        self._export_cb = ttk.Checkbutton(
+            subtitle_frame, text="Export subtitles (.srt)",
+            variable=self._export_srt_var,
+            state=tk.DISABLED,
+        )
+        self._export_cb.pack(anchor=tk.W, pady=(5, 0))
+
+        self._remove_text_var = tk.BooleanVar(value=False)
+        self._remove_text_cb = ttk.Checkbutton(
+            subtitle_frame, text="Remove text from video in region",
+            variable=self._remove_text_var,
+            state=tk.DISABLED,
+        )
+        self._remove_text_cb.pack(anchor=tk.W)
 
         # --- Progress frame ---
         prog_frame = ttk.LabelFrame(self.root, text="Progress", padding=10)
@@ -204,13 +463,58 @@ class TranslatorApp:
             self._file_var.set(path)
 
     def _on_file_changed(self, *_args: object) -> None:
-        """Enable/disable perturb button based on file selection."""
+        """Enable/disable perturb button and region button based on file selection."""
         if self._running:
             return
         if self._file_var.get():
             self._perturb_btn.config(state=tk.NORMAL)
+            self._region_btn.config(state=tk.NORMAL)
         else:
             self._perturb_btn.config(state=tk.DISABLED)
+            self._region_btn.config(state=tk.DISABLED)
+
+    # ------------------------------------------------------------------
+    # Subtitle region handlers
+    # ------------------------------------------------------------------
+
+    def _on_export_toggle(self) -> None:
+        """No-op kept for compatibility."""
+        pass
+
+    def _update_region_checkboxes(self) -> None:
+        """Enable/disable checkboxes based on whether a region is selected."""
+        if self._subtitle_region is not None:
+            self._export_cb.config(state=tk.NORMAL)
+            self._remove_text_cb.config(state=tk.NORMAL)
+        else:
+            self._export_cb.config(state=tk.DISABLED)
+            self._remove_text_cb.config(state=tk.DISABLED)
+            self._export_srt_var.set(False)
+            self._remove_text_var.set(False)
+
+    def _open_region_selector(self) -> None:
+        """Open the region selector dialog and store the result."""
+        video_path = self._file_var.get()
+        if not video_path:
+            return
+
+        dialog = RegionSelectorDialog(self.root, video_path)
+        result = dialog.show()
+
+        if result is not None:
+            self._subtitle_region = result
+            self._region_label.config(
+                text=f"Region: {result.x}, {result.y}, {result.width}\u00d7{result.height}"
+            )
+            self._clear_region_btn.config(state=tk.NORMAL)
+            self._update_region_checkboxes()
+
+    def _clear_region(self) -> None:
+        """Clear the stored subtitle region."""
+        self._subtitle_region = None
+        self._region_label.config(text="")
+        self._clear_region_btn.config(state=tk.DISABLED)
+        self._update_region_checkboxes()
 
     # ------------------------------------------------------------------
     # Perturbation dialog and execution
@@ -468,6 +772,10 @@ class TranslatorApp:
                 max_active_segments=config.tracker.max_active_segments,
                 smooth_lock_threshold=config.tracker.smooth_lock_threshold,
                 smooth_ema_alpha=config.tracker.smooth_ema_alpha,
+                smooth_one_euro_enabled=config.tracker.smooth_one_euro_enabled,
+                smooth_one_euro_min_cutoff=config.tracker.smooth_one_euro_min_cutoff,
+                smooth_one_euro_beta=config.tracker.smooth_one_euro_beta,
+                smooth_one_euro_d_cutoff=config.tracker.smooth_one_euro_d_cutoff,
             )
             inpainter = OpenCVInpainter(
                 algorithm=config.inpainter.algorithm,
@@ -498,6 +806,9 @@ class TranslatorApp:
                 translator=translator,
                 renderer=renderer,
                 progress=progress,
+                export_subtitles=self._export_srt_var.get(),
+                subtitle_region=self._subtitle_region,
+                remove_text_in_region=self._remove_text_var.get(),
             )
 
             exit_code = pipeline.run()

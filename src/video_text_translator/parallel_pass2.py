@@ -28,6 +28,7 @@ from .models import (
     Config,
     Frame_Region_Entry,
     Performance_Config,
+    Subtitle_Region,
     Text_Segment,
 )
 from .progress import ProgressReporter
@@ -77,6 +78,8 @@ class ParallelPass2:
         n_frames: int,
         fixed_font_size: dict[str, int | None],
         progress: ProgressReporter | None = None,
+        remove_text_in_region: bool = False,
+        subtitle_region: Subtitle_Region | None = None,
     ) -> None:
         self._config = config
         self._inpainter = inpainter
@@ -89,6 +92,8 @@ class ParallelPass2:
         self._n_frames = n_frames
         self._fixed_font_size = fixed_font_size
         self._progress = progress
+        self._remove_text_in_region = remove_text_in_region
+        self._subtitle_region = subtitle_region
 
         # Build per-frame index for O(1) lookup.
         self._per_frame: dict[int, list[tuple[Text_Segment, Frame_Region_Entry]]] = {}
@@ -302,6 +307,13 @@ class ParallelPass2:
         frame = self._inpainter.inpaint_frame(frame, boxes)
 
         for seg, entry in hits:
+            # Skip rendering if remove_text_in_region is active
+            # and segment center falls inside the region
+            if self._remove_text_in_region and self._subtitle_region is not None:
+                if seg.entries:
+                    cx, cy = seg.entries[0].box.center
+                    if self._subtitle_region.contains_point(cx, cy):
+                        continue
             text_vi = self._translations.get(seg.segment_id, seg.canonical_text)
             frame = self._renderer.render(
                 frame,

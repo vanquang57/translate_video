@@ -94,6 +94,10 @@ class IoUContentTracker:
         max_active_segments: int = 100,
         smooth_lock_threshold: int = 3,
         smooth_ema_alpha: float = 0.3,
+        smooth_one_euro_enabled: bool = True,
+        smooth_one_euro_min_cutoff: float = 0.3,
+        smooth_one_euro_beta: float = 0.5,
+        smooth_one_euro_d_cutoff: float = 1.0,
     ) -> None:
         if frame_width <= 0 or frame_height <= 0:
             raise ValueError(
@@ -110,6 +114,10 @@ class IoUContentTracker:
         self._max_active = max_active_segments
         self._smooth_lock_threshold = smooth_lock_threshold
         self._smooth_ema_alpha = smooth_ema_alpha
+        self._smooth_one_euro_enabled = smooth_one_euro_enabled
+        self._smooth_one_euro_min_cutoff = smooth_one_euro_min_cutoff
+        self._smooth_one_euro_beta = smooth_one_euro_beta
+        self._smooth_one_euro_d_cutoff = smooth_one_euro_d_cutoff
 
         self._active: list[_ActiveSegment] = []
         self._closed: list[_ActiveSegment] = []
@@ -153,7 +161,7 @@ class IoUContentTracker:
                 iou_val = iou(last.box, r.box)
                 sim = content_similarity(last.text, r.text)
                 cdist = center_distance(last.box, r.box)
-                cond_a = iou_val >= self._iou_threshold
+                cond_a = iou_val >= self._iou_threshold and sim >= 0.3
                 cond_b = (
                     sim >= self._sim_threshold and cdist <= self._dist_threshold
                 )
@@ -209,11 +217,19 @@ class IoUContentTracker:
 
         for seg in self._closed:
             self._fill_missing(seg)
-            self._smooth_boxes(
-                seg,
-                lock_threshold=self._smooth_lock_threshold,
-                ema_alpha=self._smooth_ema_alpha,
-            )
+            if self._smooth_one_euro_enabled:
+                self._smooth_boxes_one_euro(
+                    seg,
+                    min_cutoff=self._smooth_one_euro_min_cutoff,
+                    beta=self._smooth_one_euro_beta,
+                    d_cutoff=self._smooth_one_euro_d_cutoff,
+                )
+            else:
+                self._smooth_boxes(
+                    seg,
+                    lock_threshold=self._smooth_lock_threshold,
+                    ema_alpha=self._smooth_ema_alpha,
+                )
 
         result: list[Text_Segment] = []
         for seg in self._closed:
@@ -422,6 +438,137 @@ class IoUContentTracker:
                 max(0, int(round(ema_y))),
                 max(1, int(round(ema_w))),
                 max(1, int(round(ema_h))),
+            )
+            smoothed.append(
+                Frame_Region_Entry(
+                    frame_index=entry.frame_index,
+                    timestamp=entry.timestamp,
+                    box=new_box,
+                    text=entry.text,
+                    interpolated=entry.interpolated,
+                )
+            )
+        seg.entries = smoothed
+
+    @staticmethod
+    def _pick_canonical(current: str, candidate: str) -> str:
+        """Prefer the longer of the two strings as the canonical text.
+
+        Rationale: OCR results may grow as the text grows on screen
+        (animation effects revealing more glyphs), so a longer string is
+        usually the more complete sample.
+        """
+        c_norm = normalize_text(current)
+        cand_norm = normalize_text(candidate)
+        if len(cand_norm) > len(c_norm):
+            return candidate
+        return current
+
+    @staticmethod
+    def _smooth_boxes_one_euro(
+        seg: _ActiveSegment,
+        min_cutoff: float = 0.3,
+        beta: float = 0.5,
+        d_cutoff: float = 1.0,
+    ) -> None:
+        """Stabilize box positions using the One Euro Filter.
+
+        The One Euro Filter adaptively adjusts its smoothing based on the
+        speed of change:
+        - When the signal is nearly static (low derivative), the filter
+          uses a very low cutoff frequency → heavy smoothing → no jitter.
+        - When the signal changes rapidly (high derivative), the cutoff
+          increases → light smoothing → fast response, minimal lag.
+
+        This single algorithm replaces both the lock-threshold and EMA
+        approaches, handling static text and moving/zooming text optimally
+        without needing separate logic.
+
+        Parameters
+        ----------
+        seg : _ActiveSegment
+            The segment whose entries will be smoothed in-place.
+        min_cutoff : float
+            Minimum cutoff frequency. Lower = smoother when static.
+            Typical range: 0.1 (very smooth) to 1.0 (less smooth).
+        beta : float
+            Speed coefficient. Higher = faster response to motion.
+            Typical range: 0.0 (ignore speed) to 1.0+ (very responsive).
+        d_cutoff : float
+            Cutoff frequency for the derivative filter. Usually left at 1.0.
+        """
+        if len(seg.entries) < 2:
+            return
+        ordered = sorted(seg.entries, key=lambda e: e.frame_index)
+
+        # One Euro Filter state for each of the 4 box dimensions.
+        # Each channel: (value, derivative, first_time)
+        def _alpha(cutoff: float, te: float) -> float:
+            """Compute smoothing factor from cutoff frequency and time step."""
+            tau = 1.0 / (2.0 * math.pi * cutoff)
+            return 1.0 / (1.0 + tau / te) if te > 0 else 1.0
+
+        # Initialize from first entry.
+        prev_x = float(ordered[0].box.x)
+        prev_y = float(ordered[0].box.y)
+        prev_w = float(ordered[0].box.width)
+        prev_h = float(ordered[0].box.height)
+
+        # Derivative state (initialized to 0).
+        dx_prev = 0.0
+        dy_prev = 0.0
+        dw_prev = 0.0
+        dh_prev = 0.0
+
+        prev_frame = ordered[0].frame_index
+
+        smoothed: list[Frame_Region_Entry] = [ordered[0]]
+
+        for entry in ordered[1:]:
+            # Time elapsed (in frames; use 1.0 per frame as time unit).
+            te = float(entry.frame_index - prev_frame)
+            if te <= 0:
+                te = 1.0
+
+            raw_x = float(entry.box.x)
+            raw_y = float(entry.box.y)
+            raw_w = float(entry.box.width)
+            raw_h = float(entry.box.height)
+
+            # --- Derivative estimation (low-pass filtered) ---
+            a_d = _alpha(d_cutoff, te)
+            dx = a_d * ((raw_x - prev_x) / te) + (1.0 - a_d) * dx_prev
+            dy = a_d * ((raw_y - prev_y) / te) + (1.0 - a_d) * dy_prev
+            dw = a_d * ((raw_w - prev_w) / te) + (1.0 - a_d) * dw_prev
+            dh = a_d * ((raw_h - prev_h) / te) + (1.0 - a_d) * dh_prev
+
+            # --- Adaptive cutoff: cutoff = min_cutoff + beta * |derivative| ---
+            cutoff_x = min_cutoff + beta * abs(dx)
+            cutoff_y = min_cutoff + beta * abs(dy)
+            cutoff_w = min_cutoff + beta * abs(dw)
+            cutoff_h = min_cutoff + beta * abs(dh)
+
+            # --- Signal filtering (low-pass) ---
+            a_x = _alpha(cutoff_x, te)
+            a_y = _alpha(cutoff_y, te)
+            a_w = _alpha(cutoff_w, te)
+            a_h = _alpha(cutoff_h, te)
+
+            filt_x = a_x * raw_x + (1.0 - a_x) * prev_x
+            filt_y = a_y * raw_y + (1.0 - a_y) * prev_y
+            filt_w = a_w * raw_w + (1.0 - a_w) * prev_w
+            filt_h = a_h * raw_h + (1.0 - a_h) * prev_h
+
+            # Update state for next iteration.
+            prev_x, prev_y, prev_w, prev_h = filt_x, filt_y, filt_w, filt_h
+            dx_prev, dy_prev, dw_prev, dh_prev = dx, dy, dw, dh
+            prev_frame = entry.frame_index
+
+            new_box = Bounding_Box(
+                max(0, int(round(filt_x))),
+                max(0, int(round(filt_y))),
+                max(1, int(round(filt_w))),
+                max(1, int(round(filt_h))),
             )
             smoothed.append(
                 Frame_Region_Entry(

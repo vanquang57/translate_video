@@ -28,20 +28,29 @@ tracker:
 
   # --- Ổn định vị trí phụ đề (chống giật) ---
   #
-  # Cách hoạt động:
-  #   1. Nếu vị trí text thay đổi < smooth_lock_threshold px → KHÓA (giữ nguyên, không nhúc nhích)
-  #   2. Nếu vượt ngưỡng (text di chuyển thật) → dùng EMA để chuyển mượt thay vì nhảy đột ngột
+  # Có 2 chế độ smoothing:
   #
-  # Mẹo chỉnh:
-  #   - Vẫn giật nhẹ?           → tăng smooth_lock_threshold lên 4-5
-  #   - Text di chuyển bị lag?  → tăng smooth_ema_alpha lên 0.4-0.5
-  #   - Muốn text tĩnh 100%?   → giảm smooth_ema_alpha xuống 0.2
+  # A) One Euro Filter (MẶC ĐỊNH, khuyên dùng):
+  #    Bộ lọc thích ứng — tự động mượt khi text tĩnh, bám nhanh khi text di chuyển/zoom.
+  #    Không cần chỉnh smooth_lock_threshold hay smooth_ema_alpha khi bật One Euro.
   #
-  smooth_lock_threshold: 2            # [0, 20] px — ngưỡng khóa vị trí; dưới mức này coi là noise, không di chuyển
-  smooth_ema_alpha: 0.5               # (0.0, 1.0] — tốc độ bám theo chuyển động thật; nhỏ = mượt, lớn = nhanh
- # Nếu text giật nhẹ: tăng smooth_lock_threshold lên 4-5
- # Nếu text di chuyển bị lag: tăng smooth_ema_alpha lên 0.4-0.5
- # Nếu muốn text tĩnh hoàn toàn không nhúc nhích: giảm smooth_ema_alpha xuống 0.2
+  #    Mẹo chỉnh:
+  #      - Text tĩnh vẫn giật nhẹ?     → giảm min_cutoff xuống 0.1-0.2
+  #      - Text di chuyển bị lag?       → tăng beta lên 0.7-1.0
+  #      - Muốn cân bằng mượt + nhanh? → min_cutoff=0.3, beta=0.5 (mặc định)
+  #
+  # B) Lock + EMA (chế độ cũ):
+  #    Dùng khi smooth_one_euro_enabled: false
+  #    smooth_lock_threshold + smooth_ema_alpha sẽ được áp dụng.
+  #
+  smooth_one_euro_enabled: true        # true = dùng One Euro Filter; false = dùng Lock+EMA cũ
+  smooth_one_euro_min_cutoff: 0.15     # [0.001, 10.0] — cutoff tối thiểu; nhỏ = mượt hơn khi tĩnh
+  smooth_one_euro_beta: 0.5            # [0.0, 10.0] — hệ số tốc độ; lớn = phản ứng nhanh khi di chuyển
+  smooth_one_euro_d_cutoff: 1.0        # [0.001, 10.0] — cutoff cho đạo hàm (thường giữ 1.0)
+
+  # --- Fallback: Lock + EMA (chỉ dùng khi smooth_one_euro_enabled: false) ---
+  smooth_lock_threshold: 3             # [0, 20] px — ngưỡng khóa vị trí
+  smooth_ema_alpha: 0.35               # (0.0, 1.0] — tốc độ bám theo chuyển động thật
 
 # ============================================================================
 # Xóa text gốc (Inpainting) — tẩy chữ Trung trước khi vẽ chữ Việt
@@ -91,8 +100,8 @@ translator:
 # ============================================================================
 renderer:
   font_path: fonts/NotoSans-Regular.ttf   # đường dẫn font chính
-  font_size_max: 128        # [8, 512] — cỡ chữ tối đa (auto-fit sẽ chọn lớn nhất vừa box)
-  font_size_min: 32        # [6, font_size_max] — cỡ chữ tối thiểu (nhỏ hơn = không render)
+  font_size_max: 48        # [8, 512] — cỡ chữ tối đa (auto-fit sẽ chọn lớn nhất vừa box)
+  font_size_min: 36        # [6, font_size_max] — cỡ chữ tối thiểu (nhỏ hơn = không render)
   text_rgb: [255, 255, 0]  # màu chữ [R, G, B] — vàng mặc định
 
   # --- Viền chữ (stroke) ---

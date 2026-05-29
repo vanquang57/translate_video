@@ -160,6 +160,10 @@ def main(argv: list[str] | None = None) -> int:
         max_active_segments=config.tracker.max_active_segments,
         smooth_lock_threshold=config.tracker.smooth_lock_threshold,
         smooth_ema_alpha=config.tracker.smooth_ema_alpha,
+        smooth_one_euro_enabled=config.tracker.smooth_one_euro_enabled,
+        smooth_one_euro_min_cutoff=config.tracker.smooth_one_euro_min_cutoff,
+        smooth_one_euro_beta=config.tracker.smooth_one_euro_beta,
+        smooth_one_euro_d_cutoff=config.tracker.smooth_one_euro_d_cutoff,
     )
     inpainter = OpenCVInpainter(
         algorithm=config.inpainter.algorithm,
