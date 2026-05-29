@@ -313,21 +313,37 @@ class Pipeline:
         segments: Sequence[Text_Segment],
         translations: dict[str, str],
     ) -> None:
-        # Pre-compute one stable font size per segment using the SMALLEST
-        # box the segment ever has.
+        # Pre-compute one stable font size per segment.
+        # Strategy: use the MEDIAN box (by area) for a representative size.
+        # This avoids the problem where the smallest box is too small
+        # (causing None) and prevents font size from being recalculated
+        # per-frame which causes jitter.
         fixed_font_size: dict[str, int | None] = {}
         for seg in segments:
             text_vi = translations.get(seg.segment_id, seg.canonical_text)
             if not seg.entries:
                 fixed_font_size[seg.segment_id] = None
                 continue
-            min_box = min(seg.entries, key=lambda e: e.box.area).box
+            # Sort entries by area and pick the median box as representative.
+            sorted_entries = sorted(seg.entries, key=lambda e: e.box.area)
+            median_idx = len(sorted_entries) // 2
+            median_box = sorted_entries[median_idx].box
+            min_box = sorted_entries[0].box
+            # Try min_box first (guarantees text fits all frames).
             try:
                 size = self.renderer.auto_fit_font_size(
                     text_vi, min_box, self.config.renderer
                 )
             except AttributeError:
                 size = None
+            # If min_box is too small, try median_box as fallback.
+            if size is None:
+                try:
+                    size = self.renderer.auto_fit_font_size(
+                        text_vi, median_box, self.config.renderer
+                    )
+                except AttributeError:
+                    size = None
             fixed_font_size[seg.segment_id] = size
 
         use_parallel = _should_use_parallel(self.config.performance)

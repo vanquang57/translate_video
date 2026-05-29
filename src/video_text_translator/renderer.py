@@ -143,6 +143,11 @@ class PillowRenderer:
           2. Original box, wrapped, regular font
           3. Expanded box, wrapped, regular font
           4. Steps 0-3 again with the condensed font.
+
+        When ``fixed_font_size`` is provided and no cascade step fits,
+        we retry WITHOUT the fixed constraint so the text still renders
+        (at a potentially different size) rather than disappearing entirely.
+        This prevents flickering frames where text vanishes.
         """
         regular = style.font_path or self._default_font_path
         ovf = style.overflow or Overflow_Config()
@@ -190,6 +195,30 @@ class PillowRenderer:
                     )
                     if plan is not None:
                         return plan
+
+        # If fixed_font_size was specified but nothing fit, retry without it.
+        # This ensures the text still renders (possibly at a smaller size)
+        # rather than disappearing for some frames, which causes flickering.
+        if fixed_font_size is not None:
+            for path in font_paths:
+                for candidate_box in (box, expanded_box):
+                    if candidate_box is None:
+                        continue
+                    plan = self._fit_single_line(
+                        text, candidate_box, style, path, None
+                    )
+                    if plan is not None:
+                        return plan
+                if max_lines >= 2:
+                    for candidate_box in (box, expanded_box):
+                        if candidate_box is None:
+                            continue
+                        plan = self._fit_wrapped(
+                            text, candidate_box, style, path, max_lines, None
+                        )
+                        if plan is not None:
+                            return plan
+
         return None
 
     def _fit_single_line(
