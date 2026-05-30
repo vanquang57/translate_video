@@ -44,9 +44,9 @@ tracker:
   #    smooth_lock_threshold + smooth_ema_alpha sẽ được áp dụng.
   #
   smooth_one_euro_enabled: true        # true = dùng One Euro Filter; false = dùng Lock+EMA cũ
-  smooth_one_euro_min_cutoff: 0.004    # [0.001, 10.0] — cutoff tối thiểu; nhỏ = mượt hơn (lọc noise mạnh)
-  smooth_one_euro_beta: 0.007          # [0.0, 10.0] — hệ số tốc độ; nhỏ = mượt hơn khi di chuyển (ít rung)
-  smooth_one_euro_d_cutoff: 0.3        # [0.001, 10.0] — cutoff cho đạo hàm; nhỏ = lọc noise tốc độ mạnh hơn
+  smooth_one_euro_min_cutoff: 0.001    # [0.001, 10.0] — cutoff tối thiểu; nhỏ = mượt hơn (lọc noise mạnh)
+  smooth_one_euro_beta: 0.004          # [0.0, 10.0] — hệ số tốc độ; nhỏ = mượt hơn khi di chuyển (ít rung)
+  smooth_one_euro_d_cutoff: 0.1        # [0.001, 10.0] — cutoff cho đạo hàm; nhỏ = lọc noise tốc độ mạnh hơn
 
   # --- Fallback: Lock + EMA (chỉ dùng khi smooth_one_euro_enabled: false) ---
   smooth_lock_threshold: 3             # [0, 20] px — ngưỡng khóa vị trí
